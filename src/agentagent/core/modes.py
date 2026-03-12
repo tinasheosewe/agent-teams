@@ -43,6 +43,7 @@ class ModeResult:
     confidence: float = 0.8
     total_input_tokens: int = 0
     total_output_tokens: int = 0
+    tool_calls_made: list[dict[str, Any]] = field(default_factory=list)
 
 
 class InteractionModeBase(ABC):
@@ -102,6 +103,7 @@ class GenerativeMode(InteractionModeBase):
             )
         ]
 
+        all_tool_calls: list[dict[str, Any]] = []
         proposals: list[tuple[Agent, str]] = []
         coros = [agent.run(propose_msg) for agent in agents]
         responses = await asyncio.gather(*coros)
@@ -110,6 +112,7 @@ class GenerativeMode(InteractionModeBase):
             proposals.append((agent, resp.content))
             total_in += resp.input_tokens
             total_out += resp.output_tokens
+            all_tool_calls.extend(resp.tool_calls_made)
             if event_bus:
                 await event_bus.emit(Event(
                     type=EventType.AGENT_MESSAGE,
@@ -184,6 +187,7 @@ class GenerativeMode(InteractionModeBase):
         final_resp = await winner_agent.run(synthesize_msg)
         total_in += final_resp.input_tokens
         total_out += final_resp.output_tokens
+        all_tool_calls.extend(final_resp.tool_calls_made)
 
         if event_bus:
             await event_bus.emit(Event(
@@ -202,6 +206,7 @@ class GenerativeMode(InteractionModeBase):
             confidence=min(max(avg_scores.values()) / 10, 1.0) if avg_scores else 0.7,
             total_input_tokens=total_in,
             total_output_tokens=total_out,
+            tool_calls_made=all_tool_calls,
         )
 
 
@@ -249,6 +254,7 @@ class EvaluativeMode(InteractionModeBase):
             )
         ]
 
+        all_tool_calls: list[dict[str, Any]] = []
         all_issues: list[dict] = []
         all_strengths: list[str] = []
         assessments: list[str] = []
@@ -259,6 +265,7 @@ class EvaluativeMode(InteractionModeBase):
         for agent, resp in zip(agents, responses):
             total_in += resp.input_tokens
             total_out += resp.output_tokens
+            all_tool_calls.extend(resp.tool_calls_made)
             if event_bus:
                 await event_bus.emit(Event(
                     type=EventType.AGENT_MESSAGE,
@@ -295,6 +302,7 @@ class EvaluativeMode(InteractionModeBase):
             confidence=0.9 if overall == "pass" else (0.5 if overall == "fail" else 0.7),
             total_input_tokens=total_in,
             total_output_tokens=total_out,
+            tool_calls_made=all_tool_calls,
         )
 
 
@@ -321,6 +329,8 @@ class ExecutionMode(InteractionModeBase):
     ) -> ModeResult:
         total_in = 0
         total_out = 0
+
+        all_tool_calls: list[dict[str, Any]] = []
 
         if not agents:
             return ModeResult(content="No agents available for execution.")
@@ -385,6 +395,7 @@ class ExecutionMode(InteractionModeBase):
                 )
             ]
             resp = await agent.run(msg)
+            all_tool_calls.extend(resp.tool_calls_made)
             if event_bus:
                 await event_bus.emit(Event(
                     type=EventType.AGENT_MESSAGE,
@@ -424,6 +435,7 @@ class ExecutionMode(InteractionModeBase):
         integrate_resp = await leader.run(integrate_msg)
         total_in += integrate_resp.input_tokens
         total_out += integrate_resp.output_tokens
+        all_tool_calls.extend(integrate_resp.tool_calls_made)
 
         return ModeResult(
             content=integrate_resp.content,
@@ -431,6 +443,7 @@ class ExecutionMode(InteractionModeBase):
             confidence=0.75,
             total_input_tokens=total_in,
             total_output_tokens=total_out,
+            tool_calls_made=all_tool_calls,
         )
 
 
@@ -478,6 +491,7 @@ class DecisionMode(InteractionModeBase):
             )
         ]
 
+        all_tool_calls: list[dict[str, Any]] = []
         all_options: dict[str, dict] = {}
         recommendations: list[tuple[str, str, str]] = []  # (agent, option, reasoning)
 
@@ -487,6 +501,7 @@ class DecisionMode(InteractionModeBase):
         for agent, resp in zip(agents, responses):
             total_in += resp.input_tokens
             total_out += resp.output_tokens
+            all_tool_calls.extend(resp.tool_calls_made)
             if event_bus:
                 await event_bus.emit(Event(
                     type=EventType.AGENT_MESSAGE,
@@ -543,6 +558,7 @@ class DecisionMode(InteractionModeBase):
             confidence=decision_data["confidence"],
             total_input_tokens=total_in,
             total_output_tokens=total_out,
+            tool_calls_made=all_tool_calls,
         )
 
 

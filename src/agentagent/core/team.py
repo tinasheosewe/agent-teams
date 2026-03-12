@@ -161,8 +161,11 @@ class Team:
             last_result = result
 
             # ── Phase 3: COMPRESS ──
-            # Build transcript from result
+            # Build transcript from result, including a tool-usage summary
             transcript_text = f"Round {round_num} ({self.name}):\n{result.content}"
+            if result.tool_calls_made:
+                tool_lines = [f"  - {tc['name']}({', '.join(f'{k}={v!r}' for k, v in tc.get('args', {}).items())})" for tc in result.tool_calls_made]
+                transcript_text += "\n\nTools used:\n" + "\n".join(tool_lines)
             await self._stenographer.record_round(
                 team=self.name,
                 round_number=round_num,
