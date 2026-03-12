@@ -283,19 +283,23 @@ class ProgramManager:
                     project_id=self._project_id,
                 ))
         else:
-            # Gate failed — handle on_fail
-            if step_state.step.on_fail and step_state.attempts < 3:
-                # Reset the target step for retry
-                fail_target = step_state.step.on_fail
+            # Gate failed — retry up to 3 times
+            if step_state.attempts < 3:
+                # If on_fail points to another step, reset that; otherwise retry self
+                fail_target = step_state.step.on_fail or step_name
                 if fail_target in self._state.steps:
                     self._state.steps[fail_target].status = StepStatus.PENDING
                 step_state.status = StepStatus.PENDING
                 logger.info(
-                    "Gate %s failed, looping back to %s (attempt %d)",
+                    "Gate %s returned, looping back to %s (attempt %d)",
                     step_state.step.gate, fail_target, step_state.attempts,
                 )
             else:
-                # Escalate
+                # Max retries exceeded — escalate
+                logger.warning(
+                    "Gate %s failed after %d attempts, marking step %s as failed",
+                    step_state.step.gate, step_state.attempts, step_name,
+                )
                 if self._escalation_handler:
                     await self._escalation_handler(
                         f"Gate '{step_state.step.gate}' failed after {step_state.attempts} attempts.",
@@ -352,7 +356,15 @@ class ProgramManager:
         resp = await self._pm_agent.run(messages, response_format=JSON_MODE)
         try:
             data = parse_llm_json(resp.content, GateEvaluation)
+            logger.info(
+                "Gate %s evaluation: %s — %s",
+                step_state.step.gate, data.result, data.notes[:200],
+            )
             return GateResult(data.result), data.notes
         except (ValidationError, ValueError):
+            logger.warning(
+                "Could not parse gate evaluation for %s, auto-approving: %s",
+                step_state.step.gate, resp.content[:200],
+            )
             # If we can't parse, approve with notes
             return GateResult.APPROVED_WITH_NOTES, resp.content

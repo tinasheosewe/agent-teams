@@ -24,9 +24,9 @@ from agentagent.tools.builtin import create_default_registry
 
 logger = logging.getLogger(__name__)
 
-# Rough pricing per 1M tokens (GPT-4o as reference)
-COST_PER_1M_INPUT = 2.50
-COST_PER_1M_OUTPUT = 10.00
+# Rough pricing per 1M tokens (GPT-4o-mini as reference)
+COST_PER_1M_INPUT = 0.15
+COST_PER_1M_OUTPUT = 0.60
 
 
 class ProjectStatus(str, Enum):

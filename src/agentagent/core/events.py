@@ -61,16 +61,35 @@ EventHandler = Callable[[Event], Coroutine[Any, Any, None]]
 
 
 class EventBus:
-    """Simple async event bus for broadcasting events to subscribers."""
+    """Simple async event bus for broadcasting events to subscribers.
+
+    Keeps a per-project history so late-connecting WebSockets can replay
+    events they missed.
+    """
 
     def __init__(self) -> None:
         self._handlers: list[EventHandler] = []
         self._queue: asyncio.Queue[Event] = asyncio.Queue()
+        self._history: dict[str, list[dict[str, Any]]] = {}
 
     def subscribe(self, handler: EventHandler) -> None:
         self._handlers.append(handler)
 
+    def unsubscribe(self, handler: EventHandler) -> None:
+        try:
+            self._handlers.remove(handler)
+        except ValueError:
+            pass
+
+    def get_project_history(self, project_id: str) -> list[dict[str, Any]]:
+        """Return all past events for a project (serialised dicts)."""
+        return list(self._history.get(project_id, []))
+
     async def emit(self, event: Event) -> None:
+        # Store for replay
+        if event.project_id:
+            self._history.setdefault(event.project_id, []).append(event.to_dict())
+
         for handler in self._handlers:
             try:
                 await handler(event)

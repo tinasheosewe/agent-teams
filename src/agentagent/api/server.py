@@ -237,6 +237,13 @@ async def project_websocket(websocket: WebSocket, project_id: str) -> None:
 
     orch.event_bus.subscribe(ws_event_handler)
 
+    # Replay any events that fired before the WebSocket connected
+    for past_event in orch.event_bus.get_project_history(project_id):
+        try:
+            await websocket.send_json(past_event)
+        except Exception:
+            break
+
     try:
         while True:
             data = await websocket.receive_text()
@@ -250,3 +257,4 @@ async def project_websocket(websocket: WebSocket, project_id: str) -> None:
                 await orch.send_user_message(project_id, data, "message")
     except WebSocketDisconnect:
         _ws_manager.disconnect(project_id, websocket)
+        orch.event_bus.unsubscribe(ws_event_handler)
