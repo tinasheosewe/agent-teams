@@ -55,7 +55,11 @@ class Historian:
         summaries = await self._repo.get_summaries(self._project_id)
 
         # Semantic search for task-relevant context
-        search_results = self._repo.search(self._project_id, task_description, n_results=5)
+        try:
+            search_results = self._repo.search(self._project_id, task_description, n_results=5)
+        except Exception:
+            logger.warning("Semantic search failed during briefing, proceeding without it")
+            search_results = []
 
         context_parts = []
 
@@ -112,7 +116,11 @@ class Historian:
         structured records to produce an accurate answer.
         """
         # Search for relevant context
-        search_results = self._repo.search(self._project_id, question, n_results=8)
+        try:
+            search_results = self._repo.search(self._project_id, question, n_results=8)
+        except Exception:
+            logger.warning("Semantic search failed during query, proceeding without it")
+            search_results = []
         decisions = await self._repo.get_active_decisions(self._project_id)
 
         context_parts = ["## Relevant Knowledge Store Results"]
@@ -146,7 +154,11 @@ class Historian:
         Returns None if the topic hasn't been discussed, or a summary
         of the previous discussion if it has.
         """
-        results = self._repo.search(self._project_id, topic, n_results=3)
+        try:
+            results = self._repo.search(self._project_id, topic, n_results=3)
+        except Exception:
+            logger.warning("Semantic search failed during circular check")
+            return None
         if not results or results[0]["distance"] > 0.3:
             return None
 

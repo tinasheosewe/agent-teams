@@ -123,10 +123,18 @@ class Team:
 
         # ── Phase 1: INTAKE ──
         # Historian briefs the team
-        briefing = await self._historian.brief(self.name, task)
+        try:
+            briefing = await self._historian.brief(self.name, task)
+        except Exception:
+            logger.warning("Historian briefing failed for team %s, proceeding without context", self.name)
+            briefing = "No prior context available (historian unavailable)."
 
         # Check for circular discussions
-        circular_check = await self._historian.check_circular(task)
+        try:
+            circular_check = await self._historian.check_circular(task)
+        except Exception:
+            logger.warning("Historian circular check failed for team %s", self.name)
+            circular_check = None
         if circular_check:
             briefing += f"\n\n⚠️ HISTORIAN NOTE: {circular_check}"
 
@@ -166,12 +174,18 @@ class Team:
             if result.tool_calls_made:
                 tool_lines = [f"  - {tc['name']}({', '.join(f'{k}={v!r}' for k, v in tc.get('args', {}).items())})" for tc in result.tool_calls_made]
                 transcript_text += "\n\nTools used:\n" + "\n".join(tool_lines)
-            await self._stenographer.record_round(
-                team=self.name,
-                round_number=round_num,
-                transcript_text=transcript_text,
-                topic=task[:200],
-            )
+            try:
+                await self._stenographer.record_round(
+                    team=self.name,
+                    round_number=round_num,
+                    transcript_text=transcript_text,
+                    topic=task[:200],
+                )
+            except Exception:
+                logger.error(
+                    "Stenographer failed to record round %d for team %s — decisions/questions may be lost",
+                    round_num, self.name,
+                )
 
             if self._event_bus:
                 await self._event_bus.emit(Event(
