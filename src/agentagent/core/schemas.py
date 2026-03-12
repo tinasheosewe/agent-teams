@@ -18,6 +18,12 @@ T = TypeVar("T", bound=BaseModel)
 JSON_MODE: dict[str, str] = {"type": "json_object"}
 
 
+class ComplexityClassification(BaseModel):
+    """Result of the fast-track complexity classifier."""
+
+    complexity: Literal["simple", "complex"]
+
+
 def parse_llm_json(content: str, model: type[T]) -> T:
     """Parse LLM response content as a Pydantic model.
 

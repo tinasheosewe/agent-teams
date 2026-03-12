@@ -8,7 +8,6 @@ team sequencing, parallel execution, and user escalation.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
@@ -19,7 +18,7 @@ from pydantic import ValidationError
 from agentagent.config import CompanyConfig, WorkflowStep
 from agentagent.core.agent import Agent, Message
 from agentagent.core.events import Event, EventBus, EventType
-from agentagent.core.schemas import JSON_MODE, GateEvaluation, parse_llm_json
+from agentagent.core.schemas import JSON_MODE, ComplexityClassification, GateEvaluation, parse_llm_json
 from agentagent.core.team import Team, TeamOutput
 from agentagent.store.repository import Repository
 
@@ -351,11 +350,8 @@ class ProgramManager:
         ]
         try:
             resp = await self._pm_agent.run(messages, response_format=JSON_MODE)
-            text = resp.content.strip()
-            if text.startswith("```"):
-                text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-            parsed = json.loads(text)
-            return str(parsed.get("complexity", "")).lower().strip() == "simple"
+            result = parse_llm_json(resp.content, ComplexityClassification)
+            return result.complexity == "simple"
         except Exception:
             logger.warning("Complexity classification failed, using full pipeline")
             return False
