@@ -8,6 +8,7 @@ team sequencing, parallel execution, and user escalation.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
@@ -350,7 +351,10 @@ class ProgramManager:
         ]
         try:
             resp = await self._pm_agent.run(messages, response_format=JSON_MODE)
-            parsed = parse_llm_json(resp.content)
+            text = resp.content.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            parsed = json.loads(text)
             return str(parsed.get("complexity", "")).lower().strip() == "simple"
         except Exception:
             logger.warning("Complexity classification failed, using full pipeline")

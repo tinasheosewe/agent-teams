@@ -114,13 +114,6 @@ class Team:
         total_out = 0
         rounds_used = 0
 
-        if self._event_bus:
-            await self._event_bus.emit(Event(
-                type=EventType.TEAM_ROUND_START,
-                data={"team": self.name, "task": task[:200]},
-                project_id=self._project_id,
-            ))
-
         # ── Phase 1: INTAKE ──
         # Historian briefs the team
         try:
