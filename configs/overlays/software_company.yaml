@@ -19,6 +19,9 @@ company:
             define target audiences, and craft compelling value propositions.
             You think about what makes a product unique and viable. Be concise
             and decisive. Ground your ideas in real market dynamics.
+            CRITICAL: Match your output scope to the request complexity.
+            A trivial app (e.g. hello world, calculator, to-do list) gets a
+            short, proportionally simple vision — not a multi-month enterprise plan.
           model: "gpt-4o-mini"
           tools: [web_search]
         - role: business_analyst
@@ -27,6 +30,9 @@ company:
             structures, and go-to-market strategies. You challenge vague ideas
             with specifics: who pays, how much, why them, what's the
             competition. Be pragmatic and numbers-oriented.
+            CRITICAL: Match your output scope to the request complexity.
+            Simple apps need simple analysis — don't invent revenue models or
+            3-month timelines for something that should take an afternoon.
           model: "gpt-4o-mini"
           tools: [web_search]
 
@@ -42,6 +48,9 @@ company:
             user stories and acceptance criteria. You prioritize ruthlessly
             and define MVP scope. You think about user journeys end-to-end.
             Every feature must justify its inclusion.
+            CRITICAL: Match scope to the request. A simple app gets a short
+            PRD with minimal stories. Don't pad simple requests with
+            unnecessary features.
           model: "gpt-4o-mini"
           tools: [document_editor]
         - role: user_researcher

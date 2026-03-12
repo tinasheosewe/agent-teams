@@ -18,6 +18,18 @@ function initials(name: string): string {
   return name.split(/[_\s-]+/).map(w => w[0]?.toUpperCase() ?? '').join('').slice(0, 2)
 }
 
+function extractTaskSummary(task: string): string {
+  // Pull just the user request line and the team purpose, skip upstream context
+  const requestMatch = task.match(/User's original request:\s*(.+)/)
+  const purposeMatch = task.match(/Your team's purpose:\s*(\S+)/)
+  const produceMatch = task.match(/Produce:\s*(.+)/)
+  const parts: string[] = []
+  if (requestMatch) parts.push(`"${requestMatch[1].trim()}"`)
+  if (purposeMatch) parts.push(`→ ${purposeMatch[1]}`)
+  if (produceMatch) parts.push(`→ produce ${produceMatch[1].trim()}`)
+  return parts.length > 0 ? parts.join(' ') : task.slice(0, 120)
+}
+
 function modeClass(mode: string): string {
   const m = mode.toLowerCase()
   if (m.includes('generat')) return 'generative'
@@ -211,7 +223,7 @@ export default function TeamActivityView({ events, selectedStep }: Props) {
                 {section.mode && section.task && (
                   <div className="mode-banner">
                     <span className={`mode-badge ${modeClass(section.mode)}`}>{section.mode}</span>
-                    <span className="mode-task">{section.task}</span>
+                    <span className="mode-task">{extractTaskSummary(section.task)}</span>
                   </div>
                 )}
 
@@ -303,6 +315,17 @@ function EventRow({ event, teamColor }: { event: WsEvent; teamColor: string }) {
     )
   }
 
+  if (event.type === 'team_mode_selected') {
+    return (
+      <div className="system-event">
+        <span className="system-event-icon">&#x1F3AF;</span>
+        <span className="system-event-text">
+          Mode: <strong>{String(d.mode)}</strong>
+        </span>
+      </div>
+    )
+  }
+
   if (event.type === 'team_task_assigned') {
     return (
       <div className="system-event">
@@ -387,9 +410,12 @@ function SystemEventRow({ event }: { event: WsEvent }) {
   if (event.type === 'workflow_complete') return null
 
   let icon = '•'
-  let text = JSON.stringify(d)
-  if (event.type === 'forum_escalation') { icon = '⚠️'; text = String(d.message) }
+  let text = ''
+  if (event.type === 'workflow_step_start' && d.message) { icon = '🚀'; text = String(d.message) }
+  else if (event.type === 'workflow_step_start' && d.step) { icon = '🚀'; text = `Step **${d.step}** started` }
+  else if (event.type === 'forum_escalation') { icon = '⚠️'; text = String(d.message) }
   else if (event.type === 'agent_message') { icon = '💬'; text = String(d.content || '') }
+  else { text = Object.entries(d).filter(([,v]) => v != null).map(([k,v]) => `**${k}:** ${v}`).join(' · ') }
 
   return (
     <div className="system-event">

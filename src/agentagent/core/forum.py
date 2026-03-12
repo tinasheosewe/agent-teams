@@ -318,6 +318,16 @@ class ProgramManager:
         step_state = self._state.steps[step_name]
         parts = [f"User's original request: {user_prompt}"]
 
+        parts.append(
+            "IMPORTANT: Match the scope and complexity of your output to the "
+            "request. A simple request (e.g. 'hello world app', 'to-do list') "
+            "should produce a proportionally simple, minimal output — not an "
+            "enterprise-grade plan. Do NOT over-engineer. If it's a simple app, "
+            "keep the vision short, the PRD minimal, the architecture trivial, "
+            "and the implementation straightforward. Only scale up complexity "
+            "when the request genuinely warrants it."
+        )
+
         # Add upstream outputs
         for dep_gate in step_state.step.depends_on:
             dep_step = next(
