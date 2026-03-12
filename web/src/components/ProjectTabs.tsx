@@ -27,7 +27,7 @@ export default function ProjectTabs({ projects, activeId, onSelect }: Props) {
         >
           <span className="project-tab-dot" style={{ background: statusColor(p.status) }} />
           <span className="project-tab-label">
-            {p.prompt.slice(0, 24)}{p.prompt.length > 24 ? '…' : ''}
+            {p.prompt.slice(0, 18)}{p.prompt.length > 18 ? '…' : ''}
           </span>
         </button>
       ))}

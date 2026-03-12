@@ -5,17 +5,15 @@ const MAX_VISIBLE = 4
 const AUTO_DISMISS_MS = 6000
 
 const KIND_COLORS: Record<string, string> = {
-  'low-confidence': 'var(--yellow)',
-  'gate-return': 'var(--red)',
-  'escalation': 'var(--orange, #fb923c)',
-  'input-request': 'var(--accent)',
+  error: 'var(--red)',
+  warning: 'var(--yellow)',
+  info: 'var(--accent)',
 }
 
 const KIND_ICONS: Record<string, string> = {
-  'low-confidence': '◑',
-  'gate-return': '↩',
-  'escalation': '▲',
-  'input-request': '◇',
+  error: '✕',
+  warning: '▲',
+  info: '◇',
 }
 
 interface Props {

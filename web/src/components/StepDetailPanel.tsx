@@ -126,8 +126,8 @@ function computeProjectStats(events: WsEvent[], decisions: Decision[], artifacts
       lastTs = evt.timestamp
     }
     if (evt.type === 'cost_update') {
-      tokenIn = Number(evt.data.total_input_tokens ?? 0)
-      tokenOut = Number(evt.data.total_output_tokens ?? 0)
+      tokenIn = Number(evt.data.input_tokens ?? 0)
+      tokenOut = Number(evt.data.output_tokens ?? 0)
       cost = Number(evt.data.estimated_cost ?? 0)
     }
   }
@@ -159,6 +159,8 @@ export default function StepDetailPanel({
 }: Props) {
   const [expandedDecision, setExpandedDecision] = useState<string | null>(null)
   const [expandedArtifact, setExpandedArtifact] = useState<string | null>(null)
+  const [transcriptFilter, setTranscriptFilter] = useState('')
+  const [collapsedAgents, setCollapsedAgents] = useState<Set<string>>(new Set())
 
   // Step-level info
   const stepInfo = useMemo(
@@ -365,12 +367,112 @@ export default function StepDetailPanel({
         {contextTab === 'transcript' && (
           transcript.length === 0
             ? <div className="ctx-empty">No messages in this step</div>
-            : transcript.map((evt, i) => {
+            : <TranscriptView
+                messages={transcript}
+                filter={transcriptFilter}
+                onFilterChange={setTranscriptFilter}
+                collapsedAgents={collapsedAgents}
+                onToggleAgent={(agent) => setCollapsedAgents(prev => {
+                  const next = new Set(prev)
+                  next.has(agent) ? next.delete(agent) : next.add(agent)
+                  return next
+                })}
+              />
+        )}
+      </div>
+    </div>
+  )
+}
+
+/* ─── Transcript View ─── */
+
+interface TranscriptGroup {
+  agent: string
+  color: string
+  messages: WsEvent[]
+}
+
+function groupByAgent(messages: WsEvent[]): TranscriptGroup[] {
+  const groups: TranscriptGroup[] = []
+  let current: TranscriptGroup | null = null
+
+  for (const msg of messages) {
+    const agent = String(msg.data.agent || 'Agent')
+    if (current && current.agent === agent) {
+      current.messages.push(msg)
+    } else {
+      current = { agent, color: PALETTE[hashIdx(agent)], messages: [msg] }
+      groups.push(current)
+    }
+  }
+
+  return groups
+}
+
+function TranscriptView({ messages, filter, onFilterChange, collapsedAgents, onToggleAgent }: {
+  messages: WsEvent[]
+  filter: string
+  onFilterChange: (f: string) => void
+  collapsedAgents: Set<string>
+  onToggleAgent: (agent: string) => void
+}) {
+  const filtered = filter
+    ? messages.filter(m => {
+        const content = String(m.data.content || '').toLowerCase()
+        const agent = String(m.data.agent || '').toLowerCase()
+        const q = filter.toLowerCase()
+        return content.includes(q) || agent.includes(q)
+      })
+    : messages
+
+  const groups = groupByAgent(filtered)
+  const agentNames = [...new Set(messages.map(m => String(m.data.agent || 'Agent')))]
+
+  return (
+    <div className="ctx-transcript">
+      {/* Controls */}
+      <div className="ctx-transcript-controls">
+        <input
+          className="ctx-transcript-search"
+          type="text"
+          placeholder="Filter messages…"
+          value={filter}
+          onChange={e => onFilterChange(e.target.value)}
+        />
+        <div className="ctx-transcript-agents">
+          {agentNames.map(name => (
+            <button
+              key={name}
+              className={`ctx-transcript-agent-btn ${collapsedAgents.has(name) ? 'muted' : ''}`}
+              onClick={() => onToggleAgent(name)}
+              title={collapsedAgents.has(name) ? `Show ${name}` : `Hide ${name}`}
+            >
+              <span className="ctx-transcript-agent-dot" style={{ background: PALETTE[hashIdx(name)] }} />
+              {name.split(/[_\s-]+/).map(w => w[0]?.toUpperCase() ?? '').join('').slice(0, 2)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Grouped messages */}
+      {groups.map((group, gi) => {
+        const hidden = collapsedAgents.has(group.agent)
+        return (
+          <div key={gi} className="ctx-transcript-group">
+            <div
+              className="ctx-transcript-group-header"
+              onClick={() => onToggleAgent(group.agent)}
+            >
+              <span className={`chevron ${hidden ? '' : 'open'}`}>›</span>
+              <span className="ctx-transcript-agent-dot" style={{ background: group.color }} />
+              <span className="ctx-transcript-group-name">{group.agent}</span>
+              <span className="ctx-transcript-group-count">{group.messages.length}</span>
+            </div>
+            {!hidden && group.messages.map((evt, mi) => {
               const name = String(evt.data.agent || 'Agent')
-              const agentColor = PALETTE[hashIdx(name)]
               return (
-                <div key={i} className="ctx-transcript-msg">
-                  <div className="ctx-transcript-avatar" style={{ background: agentColor }}>
+                <div key={mi} className="ctx-transcript-msg">
+                  <div className="ctx-transcript-avatar" style={{ background: group.color }}>
                     {name.split(/[_\s-]+/).map(w => w[0]?.toUpperCase() ?? '').join('').slice(0, 2)}
                   </div>
                   <div className="ctx-transcript-body">
@@ -386,9 +488,14 @@ export default function StepDetailPanel({
                   </div>
                 </div>
               )
-            })
-        )}
-      </div>
+            })}
+          </div>
+        )
+      })}
+
+      {filtered.length === 0 && filter && (
+        <div className="ctx-empty">No messages match "{filter}"</div>
+      )}
     </div>
   )
 }
@@ -424,9 +531,10 @@ function DecisionRow({ decision, expanded, onToggle, onVeto }: {
             <span className="ctx-decision-team">{decision.team}</span>
             <button
               className="btn btn-danger-outline btn-sm"
-              onClick={(e) => { e.stopPropagation(); onVeto(`Challenge decision: ${decision.topic}`) }}
+              onClick={(e) => { e.stopPropagation(); onVeto(`Flag decision: ${decision.topic}`) }}
+              title="Flag this decision for human review — sends a veto to the orchestrator"
             >
-              Challenge
+              ⚑ Flag
             </button>
           </div>
         </>

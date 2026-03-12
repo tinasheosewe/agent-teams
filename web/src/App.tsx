@@ -138,7 +138,7 @@ export default function App() {
   }, [send])
 
   const handleVeto = useCallback((message: string) => {
-    send('message', message)
+    send('veto', message)
   }, [send])
 
   const handleToastNavigate = useCallback((stepName: string) => {
