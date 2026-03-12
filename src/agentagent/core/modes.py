@@ -13,8 +13,9 @@ import asyncio
 import json
 import logging
 from abc import ABC, abstractmethod
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
@@ -28,6 +29,9 @@ from agentagent.core.schemas import (
     TaskDecomposition,
     parse_llm_json,
 )
+
+if TYPE_CHECKING:
+    from agentagent.core.events import RunContext
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +66,7 @@ class InteractionModeBase(ABC):
         context: str,
         event_bus: EventBus | None = None,
         project_id: str = "",
+        run_context: "RunContext | None" = None,
     ) -> ModeResult:
         """Run the mode protocol with the given agents and task."""
 
@@ -86,6 +91,7 @@ class GenerativeMode(InteractionModeBase):
         context: str,
         event_bus: EventBus | None = None,
         project_id: str = "",
+        run_context: "RunContext | None" = None,
     ) -> ModeResult:
         total_in = 0
         total_out = 0
@@ -230,6 +236,7 @@ class EvaluativeMode(InteractionModeBase):
         context: str,
         event_bus: EventBus | None = None,
         project_id: str = "",
+        run_context: "RunContext | None" = None,
     ) -> ModeResult:
         total_in = 0
         total_out = 0
@@ -326,6 +333,7 @@ class ExecutionMode(InteractionModeBase):
         context: str,
         event_bus: EventBus | None = None,
         project_id: str = "",
+        run_context: "RunContext | None" = None,
     ) -> ModeResult:
         total_in = 0
         total_out = 0
@@ -372,13 +380,15 @@ class ExecutionMode(InteractionModeBase):
                 project_id=project_id,
             ))
 
-        # Phase 2: Execute subtasks (parallel where no dependencies)
+        # Phase 2: Execute subtasks in dependency-ordered layers
         agent_map = {a.role: a for a in agents}
         results: dict[str, str] = {}
 
-        # Simple approach: execute all subtasks in parallel
-        # (dependency handling would add complexity; for MVP, we pass all context)
-        async def execute_subtask(subtask: dict) -> tuple[str, str]:
+        layers = _topological_layers(subtasks)
+
+        async def execute_subtask(
+            subtask: dict, dep_context: str,
+        ) -> tuple[str, str]:
             assignee = subtask.get("assignee", agents[0].role)
             agent = agent_map.get(assignee, agents[0])
             subtask_desc = subtask.get("task", "")
@@ -388,13 +398,14 @@ class ExecutionMode(InteractionModeBase):
                     role="user",
                     content=(
                         f"Context:\n{context}\n\n"
+                        f"{dep_context}"
                         f"Your assigned subtask:\n{subtask_desc}\n\n"
                         "Complete this subtask. Be thorough and produce complete, "
                         "working output. If you're writing code, make it production-ready."
                     ),
                 )
             ]
-            resp = await agent.run(msg)
+            resp = await agent.run(msg, run_context=run_context)
             all_tool_calls.extend(resp.tool_calls_made)
             if event_bus:
                 await event_bus.emit(Event(
@@ -407,32 +418,71 @@ class ExecutionMode(InteractionModeBase):
                     },
                     project_id=project_id,
                 ))
-            return assignee, resp.content
+            return subtask_desc, resp.content
 
-        subtask_results = await asyncio.gather(
-            *(execute_subtask(st) for st in subtasks)
-        )
-        for assignee, content in subtask_results:
-            results[assignee] = content
+        for layer in layers:
+            # Interrupt check between layers
+            if run_context:
+                await run_context.check_pause()
 
-        # Phase 3: Integration
+            # Build dependency context from completed subtask results
+            dep_context = ""
+            for st in layer:
+                deps = st.get("dependencies", [])
+                dep_parts = [
+                    f"Result of '{dep}':\n{results[dep]}\n"
+                    for dep in deps if dep in results
+                ]
+                if dep_parts:
+                    dep_context = (
+                        "## Completed dependency outputs:\n"
+                        + "\n".join(dep_parts) + "\n\n"
+                    )
+
+            layer_results = await asyncio.gather(
+                *(execute_subtask(st, dep_context) for st in layer)
+            )
+            for desc, content in layer_results:
+                results[desc] = content
+
+        # Phase 3: Integration — drain agent signals and include them
+        signal_lines: list[str] = []
+        if run_context:
+            while not run_context.agent_channel.empty():
+                try:
+                    sig = run_context.agent_channel.get_nowait()
+                    signal_lines.append(
+                        f"- [{sig.get('severity', 'info')}] {sig.get('message', '')}"
+                    )
+                except asyncio.QueueEmpty:
+                    break
+
         results_text = "\n\n---\n\n".join(
-            f"### {role}:\n{content}" for role, content in results.items()
+            f"### {desc}:\n{content}" for desc, content in results.items()
         )
+
+        signal_block = ""
+        if signal_lines:
+            signal_block = (
+                "\n\n## Agent Signals (flagged during execution):\n"
+                + "\n".join(signal_lines)
+                + "\n\nResolve any conflicts or issues raised above.\n"
+            )
 
         integrate_msg = [
             Message(
                 role="user",
                 content=(
                     f"Original task:\n{task}\n\n"
-                    f"Subtask results:\n\n{results_text}\n\n"
+                    f"Subtask results:\n\n{results_text}\n"
+                    f"{signal_block}\n"
                     "Integrate all subtask results into a cohesive final output. "
                     "Resolve any conflicts or inconsistencies. "
                     "Produce the complete, integrated result."
                 ),
             )
         ]
-        integrate_resp = await leader.run(integrate_msg)
+        integrate_resp = await leader.run(integrate_msg, run_context=run_context)
         total_in += integrate_resp.input_tokens
         total_out += integrate_resp.output_tokens
         all_tool_calls.extend(integrate_resp.tool_calls_made)
@@ -467,6 +517,7 @@ class DecisionMode(InteractionModeBase):
         context: str,
         event_bus: EventBus | None = None,
         project_id: str = "",
+        run_context: "RunContext | None" = None,
     ) -> ModeResult:
         total_in = 0
         total_out = 0
@@ -560,6 +611,56 @@ class DecisionMode(InteractionModeBase):
             total_output_tokens=total_out,
             tool_calls_made=all_tool_calls,
         )
+
+
+# ── Topological sort helper ──────────────────────────────────
+
+
+def _topological_layers(subtasks: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Group subtasks into dependency layers using Kahn's algorithm.
+
+    Subtasks within a layer have no inter-dependencies and can run in parallel.
+    Layers execute sequentially.  If a cycle is detected the remaining subtasks
+    are placed in a final catch-all layer.
+    """
+    task_descs = [s.get("task", "") for s in subtasks]
+    desc_to_subtask = {s.get("task", ""): s for s in subtasks}
+    desc_set = set(task_descs)
+
+    # Build adjacency: dep → list of subtasks that depend on it
+    in_degree: dict[str, int] = {d: 0 for d in task_descs}
+    dependents: dict[str, list[str]] = defaultdict(list)
+
+    for st in subtasks:
+        desc = st.get("task", "")
+        for dep in st.get("dependencies", []):
+            if dep in desc_set:
+                in_degree[desc] += 1
+                dependents[dep].append(desc)
+
+    # Kahn's BFS
+    layers: list[list[dict[str, Any]]] = []
+    queue: deque[str] = deque(d for d, deg in in_degree.items() if deg == 0)
+
+    while queue:
+        layer_descs = list(queue)
+        queue.clear()
+        layers.append([desc_to_subtask[d] for d in layer_descs])
+        for d in layer_descs:
+            for child in dependents[d]:
+                in_degree[child] -= 1
+                if in_degree[child] == 0:
+                    queue.append(child)
+
+    # Remaining nodes form a cycle — dump them in a final layer
+    remaining = [
+        desc_to_subtask[d] for d, deg in in_degree.items() if deg > 0
+    ]
+    if remaining:
+        logger.warning("Subtask dependency cycle detected — running remaining subtasks together")
+        layers.append(remaining)
+
+    return layers if layers else [subtasks]
 
 
 # Mode registry

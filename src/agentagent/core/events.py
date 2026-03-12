@@ -1,4 +1,8 @@
-"""Event system for streaming agent activity to the UI."""
+"""Event system for streaming agent activity to the UI.
+
+Also defines ``RunContext``, the shared context object threaded through
+the entire execution chain (Forum → Team → Moderator → Mode → Agent).
+"""
 
 from __future__ import annotations
 
@@ -36,6 +40,9 @@ class EventType(str, Enum):
     WORKFLOW_COMPLETE = "workflow_complete"
     # User
     USER_INPUT_REQUESTED = "user_input_requested"
+    USER_INPUT_RECEIVED = "user_input_received"
+    # File
+    FILE_WRITTEN = "file_written"
     # Cost
     COST_UPDATE = "cost_update"
 
@@ -95,3 +102,33 @@ class EventBus:
                 await handler(event)
             except Exception:
                 logger.exception("Event handler error for %s", event.type)
+
+
+@dataclass
+class RunContext:
+    """Shared context threaded through Forum → Team → Moderator → Mode → Agent.
+
+    Bundles every cross-cutting concern so downstream code never needs to
+    accept a growing list of individual parameters.
+    """
+
+    project_id: str
+    event_bus: EventBus
+    pause_event: asyncio.Event
+    message_queue: asyncio.Queue[dict[str, str]]
+    agent_channel: asyncio.Queue[dict[str, str]]
+    mode: str = "interactive"  # "interactive" or "autonomous"
+    _cancel: bool = field(default=False, repr=False)
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancel
+
+    def cancel(self) -> None:
+        self._cancel = True
+
+    async def check_pause(self) -> None:
+        """Block while paused and raise if cancelled."""
+        await self.pause_event.wait()
+        if self._cancel:
+            raise asyncio.CancelledError("RunContext cancelled")

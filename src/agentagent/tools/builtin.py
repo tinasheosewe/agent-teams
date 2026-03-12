@@ -7,10 +7,19 @@ import json
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any
-
+from typing import TYPE_CHECKING, Any
 
 from agentagent.tools.base import BaseTool
+
+if TYPE_CHECKING:
+    from agentagent.core.events import RunContext
+    from agentagent.tools.base import ToolRegistry
+
+
+# ── File safety constants ────────────────────────────────────
+MAX_FILE_SIZE_BYTES = 1_048_576  # 1 MB per file
+MAX_FILE_COUNT = 200
+MAX_WORKSPACE_BYTES = 52_428_800  # 50 MB total
 
 
 class CodeExecutionTool(BaseTool):
@@ -87,9 +96,14 @@ class CodeExecutionTool(BaseTool):
 class FileSystemTool(BaseTool):
     """Read, write, and list files within a scoped project directory."""
 
-    def __init__(self, work_dir: str | None = None) -> None:
+    def __init__(
+        self,
+        work_dir: str | None = None,
+        run_context: "RunContext | None" = None,
+    ) -> None:
         self._work_dir = Path(work_dir or tempfile.mkdtemp(prefix="agentagent_"))
         self._work_dir.mkdir(parents=True, exist_ok=True)
+        self._run_context = run_context
 
     @property
     def name(self) -> str:
@@ -124,6 +138,16 @@ class FileSystemTool(BaseTool):
             "required": ["action", "path"],
         }
 
+    def _count_workspace(self) -> tuple[int, int]:
+        """Return (file_count, total_bytes) under the workspace root."""
+        count = 0
+        total = 0
+        for p in self._work_dir.rglob("*"):
+            if p.is_file():
+                count += 1
+                total += p.stat().st_size
+        return count, total
+
     async def execute(self, **kwargs: Any) -> str:
         action = kwargs["action"]
         rel_path = kwargs["path"]
@@ -141,8 +165,37 @@ class FileSystemTool(BaseTool):
 
         elif action == "write":
             content = kwargs.get("content", "")
+            content_bytes = len(content.encode())
+
+            # Safety: per-file size limit
+            if content_bytes > MAX_FILE_SIZE_BYTES:
+                return json.dumps({
+                    "error": f"File too large ({content_bytes} bytes). Maximum is {MAX_FILE_SIZE_BYTES} bytes."
+                })
+
+            # Safety: workspace limits
+            file_count, total_bytes = self._count_workspace()
+            if not resolved.exists() and file_count >= MAX_FILE_COUNT:
+                return json.dumps({
+                    "error": f"File limit reached ({MAX_FILE_COUNT} files). Delete unused files first."
+                })
+            if total_bytes + content_bytes > MAX_WORKSPACE_BYTES:
+                return json.dumps({
+                    "error": f"Workspace size limit reached ({MAX_WORKSPACE_BYTES // 1_048_576} MB)."
+                })
+
             resolved.parent.mkdir(parents=True, exist_ok=True)
             resolved.write_text(content)
+
+            # Emit FILE_WRITTEN event
+            if self._run_context:
+                from agentagent.core.events import Event, EventType
+                await self._run_context.event_bus.emit(Event(
+                    type=EventType.FILE_WRITTEN,
+                    data={"path": rel_path, "size": content_bytes},
+                    project_id=self._run_context.project_id,
+                ))
+
             return json.dumps({"status": "written", "path": rel_path})
 
         elif action == "list":
@@ -284,13 +337,145 @@ class DocumentEditorTool(BaseTool):
         return json.dumps({"error": f"Unknown action: {action}"})
 
 
-def create_default_registry(work_dir: str | None = None) -> "ToolRegistry":
-    """Create a ToolRegistry populated with all built-in tools."""
+def create_default_registry(
+    work_dir: str | None = None,
+    run_context: "RunContext | None" = None,
+) -> "ToolRegistry":
+    """Create a ToolRegistry populated with all built-in tools.
+
+    If *run_context* is provided and its mode is ``"interactive"``, the
+    ``request_clarification`` tool is registered.  The ``signal_leader``
+    tool is always registered when a context is present.
+    """
     from agentagent.tools.base import ToolRegistry
 
     registry = ToolRegistry()
     registry.register(CodeExecutionTool(work_dir=work_dir))
-    registry.register(FileSystemTool(work_dir=work_dir))
+    registry.register(FileSystemTool(work_dir=work_dir, run_context=run_context))
     registry.register(WebSearchTool())
     registry.register(DocumentEditorTool(work_dir=work_dir))
+
+    if run_context:
+        registry.register(SignalLeaderTool(run_context))
+        if run_context.mode == "interactive":
+            registry.register(RequestClarificationTool(run_context))
+
     return registry
+
+
+# ── Coordination tools ───────────────────────────────────────
+
+
+class SignalLeaderTool(BaseTool):
+    """Allow an agent to flag an issue to the team leader during parallel work."""
+
+    def __init__(self, run_context: "RunContext") -> None:
+        self._ctx = run_context
+
+    @property
+    def name(self) -> str:
+        return "signal_leader"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Signal an issue, conflict, or important observation to the team "
+            "leader.  Use this when you discover something during execution that "
+            "other team members or the leader should know about (e.g. conflicting "
+            "requirements, a shared dependency, a blocking question)."
+        )
+
+    @property
+    def parameters_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "Description of the issue or observation.",
+                },
+                "severity": {
+                    "type": "string",
+                    "enum": ["info", "warning", "critical"],
+                    "description": "How urgent this signal is.",
+                },
+            },
+            "required": ["message"],
+        }
+
+    async def execute(self, **kwargs: Any) -> str:
+        message = kwargs["message"]
+        severity = kwargs.get("severity", "info")
+        await self._ctx.agent_channel.put({
+            "message": message,
+            "severity": severity,
+        })
+        return json.dumps({"status": "signal_sent"})
+
+
+class RequestClarificationTool(BaseTool):
+    """Ask the user a clarifying question and wait for a response."""
+
+    TIMEOUT_SECONDS = 120
+
+    def __init__(self, run_context: "RunContext") -> None:
+        self._ctx = run_context
+
+    @property
+    def name(self) -> str:
+        return "request_clarification"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Ask the user a clarifying question when you genuinely cannot "
+            "proceed without more information.  Batch multiple questions into "
+            "a single call.  Prefer making a reasonable assumption over asking. "
+            "Only use this when the ambiguity would lead to fundamentally "
+            "different implementations."
+        )
+
+    @property
+    def parameters_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The question(s) to ask the user.",
+                },
+            },
+            "required": ["question"],
+        }
+
+    async def execute(self, **kwargs: Any) -> str:
+        from agentagent.core.events import Event, EventType
+
+        question = kwargs["question"]
+
+        # Emit event so the UI shows the question
+        await self._ctx.event_bus.emit(Event(
+            type=EventType.USER_INPUT_REQUESTED,
+            data={"question": question},
+            project_id=self._ctx.project_id,
+        ))
+
+        # Wait for the user to respond (or timeout)
+        try:
+            response = await asyncio.wait_for(
+                self._ctx.message_queue.get(), timeout=self.TIMEOUT_SECONDS
+            )
+            answer = response.get("message", "")
+
+            await self._ctx.event_bus.emit(Event(
+                type=EventType.USER_INPUT_RECEIVED,
+                data={"question": question, "answer": answer},
+                project_id=self._ctx.project_id,
+            ))
+
+            return json.dumps({"answer": answer})
+        except asyncio.TimeoutError:
+            return json.dumps({
+                "answer": "No user response received within the timeout. "
+                "Proceed with your best judgment."
+            })

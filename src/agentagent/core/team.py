@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agentagent.config import TeamConfig
 from agentagent.core.agent import Agent, Message
@@ -20,6 +20,9 @@ from agentagent.core.stenographer import Stenographer
 from agentagent.store.models import Artifact, ArtifactStatus
 from agentagent.store.repository import Repository
 from agentagent.tools.base import ToolRegistry
+
+if TYPE_CHECKING:
+    from agentagent.core.events import RunContext
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +102,7 @@ class Team:
         task: str,
         output_artifact_types: list[str] | None = None,
         gate_criteria: dict[str, Any] | None = None,
+        run_context: "RunContext | None" = None,
     ) -> TeamOutput:
         """Execute a complete task through the team loop.
 
@@ -106,6 +110,7 @@ class Team:
             task: The task description from the workflow or user.
             output_artifact_types: Types of artifacts this team should produce.
             gate_criteria: Acceptance criteria for the gate.
+            run_context: Shared context for pause/cancel/event support.
 
         Returns:
             TeamOutput with the deliverable and metadata.
@@ -142,6 +147,10 @@ class Team:
         for round_num in range(1, self._config.max_rounds + 1):
             rounds_used = round_num
 
+            # Interrupt check between rounds
+            if run_context:
+                await run_context.check_pause()
+
             if self._event_bus:
                 await self._event_bus.emit(Event(
                     type=EventType.TEAM_ROUND_START,
@@ -156,6 +165,7 @@ class Team:
                 context=context,
                 event_bus=self._event_bus,
                 project_id=self._project_id,
+                run_context=run_context,
             )
             total_in += result.total_input_tokens
             total_out += result.total_output_tokens

@@ -52,6 +52,7 @@ class ProjectRecord(Base):
     config_name: Mapped[str] = mapped_column(String(256))
     config_path: Mapped[str] = mapped_column(String(512), default="")
     status: Mapped[str] = mapped_column(String(32), default="created")
+    mode: Mapped[str] = mapped_column(String(32), default="interactive")
     total_input_tokens: Mapped[int] = mapped_column(default=0)
     total_output_tokens: Mapped[int] = mapped_column(default=0)
     estimated_cost: Mapped[float] = mapped_column(Float, default=0.0)

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from agentagent.config import CompanyConfig, load_config
-from agentagent.core.events import Event, EventBus, EventType
+from agentagent.core.events import Event, EventBus, EventType, RunContext
 from agentagent.core.forum import ProgramManager, WorkflowState
 from agentagent.core.team import Team, TeamOutput
 from agentagent.store.database import Database
@@ -48,11 +48,14 @@ class ProjectState:
     config_name: str
     config_path: str = ""
     status: ProjectStatus = ProjectStatus.CREATED
+    mode: str = "interactive"  # "interactive" or "autonomous"
     workflow_state: WorkflowState | None = None
     total_input_tokens: int = 0
     total_output_tokens: int = 0
     estimated_cost: float = 0.0
-    user_messages: list[dict[str, str]] = field(default_factory=list)
+    message_queue: asyncio.Queue[dict[str, str]] = field(
+        default_factory=asyncio.Queue
+    )
 
 
 class Orchestrator:
@@ -96,6 +99,7 @@ class Orchestrator:
                 config_name=rec.config_name,
                 config_path=rec.config_path,
                 status=ProjectStatus(rec.status) if rec.status in ProjectStatus.__members__.values() else ProjectStatus.FAILED,
+                mode=getattr(rec, "mode", "interactive") or "interactive",
                 total_input_tokens=rec.total_input_tokens,
                 total_output_tokens=rec.total_output_tokens,
                 estimated_cost=rec.estimated_cost,
@@ -155,9 +159,28 @@ class Orchestrator:
             self._find_config_path(state.config_name)
         )
 
-        # Create tool registry scoped to this project
+        # Create RunContext — the shared context for the entire execution chain
+        pause_event = self._pause_events.get(project_id)
+        if not pause_event:
+            pause_event = asyncio.Event()
+            pause_event.set()
+            self._pause_events[project_id] = pause_event
+
+        run_context = RunContext(
+            project_id=project_id,
+            event_bus=self._event_bus,
+            pause_event=pause_event,
+            message_queue=state.message_queue,
+            agent_channel=asyncio.Queue(),
+            mode=state.mode,
+        )
+
+        # Create tool registry scoped to this project (with RunContext)
         project_work_dir = f"{self._work_dir}/{project_id}"
-        tool_registry = create_default_registry(work_dir=project_work_dir)
+        tool_registry = create_default_registry(
+            work_dir=project_work_dir,
+            run_context=run_context,
+        )
 
         # Create teams
         teams: dict[str, Team] = {}
@@ -174,11 +197,9 @@ class Orchestrator:
 
         try:
             if len(config.teams) == 1:
-                # Single-team mode — run directly
-                state = await self._run_single_team(state, config, teams)
+                state = await self._run_single_team(state, config, teams, run_context)
             else:
-                # Multi-team mode — use forum + Program Manager
-                state = await self._run_multi_team(state, config, teams)
+                state = await self._run_multi_team(state, config, teams, run_context)
         except Exception:
             state.status = ProjectStatus.FAILED
             await self._persist_project_state(state)
@@ -193,6 +214,7 @@ class Orchestrator:
         state: ProjectState,
         config: CompanyConfig,
         teams: dict[str, Team],
+        run_context: RunContext,
     ) -> ProjectState:
         """Run a single-team project."""
         team = next(iter(teams.values()))
@@ -202,6 +224,7 @@ class Orchestrator:
             task=state.prompt,
             output_artifact_types=workflow_step.output if workflow_step else None,
             gate_criteria=workflow_step.gate_criteria.model_dump() if workflow_step else None,
+            run_context=run_context,
         )
 
         state.total_input_tokens = output.total_input_tokens
@@ -217,6 +240,7 @@ class Orchestrator:
         state: ProjectState,
         config: CompanyConfig,
         teams: dict[str, Team],
+        run_context: RunContext,
     ) -> ProjectState:
         """Run a multi-team project through the forum."""
 
@@ -243,6 +267,7 @@ class Orchestrator:
             project_id=state.id,
             escalation_handler=escalation_handler,
             pause_event=self._pause_events.get(state.id),
+            run_context=run_context,
         )
 
         workflow_state = await pm.run_workflow(state.prompt)
@@ -283,12 +308,25 @@ class Orchestrator:
         if not state:
             return {"error": "Project not found"}
 
-        state.user_messages.append({"action": action, "message": message})
+        await state.message_queue.put({"action": action, "message": message})
 
         return {"status": "received", "action": action}
 
     def get_project_state(self, project_id: str) -> ProjectState | None:
         return self._projects.get(project_id)
+
+    async def set_project_mode(
+        self, project_id: str, mode: str
+    ) -> dict[str, str]:
+        """Set the interaction mode for a project (interactive/autonomous)."""
+        state = self._projects.get(project_id)
+        if not state:
+            return {"error": "Project not found"}
+        if mode not in ("interactive", "autonomous"):
+            return {"error": f"Invalid mode: {mode}. Must be 'interactive' or 'autonomous'."}
+        state.mode = mode
+        await self._repo.update_project(project_id, mode=mode)
+        return {"status": "mode_updated", "mode": mode}
 
     def list_projects(self) -> list[ProjectState]:
         """Return all project states."""

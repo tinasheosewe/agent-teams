@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
@@ -22,6 +22,9 @@ from agentagent.core.schemas import (
     CompletenessResponse,
     parse_llm_json,
 )
+
+if TYPE_CHECKING:
+    from agentagent.core.events import RunContext
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +96,7 @@ class Moderator:
         event_bus: EventBus | None = None,
         project_id: str = "",
         forced_mode: str | None = None,
+        run_context: "RunContext | None" = None,
     ) -> ModeResult:
         """Execute a single round of team work.
 
@@ -126,6 +130,7 @@ class Moderator:
             context=context,
             event_bus=event_bus,
             project_id=project_id,
+            run_context=run_context,
         )
 
         return result

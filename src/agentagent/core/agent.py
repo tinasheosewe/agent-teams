@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import litellm
 
 from agentagent.tools.base import ToolRegistry
+
+if TYPE_CHECKING:
+    from agentagent.core.events import RunContext
 
 logger = logging.getLogger(__name__)
 
@@ -80,13 +83,19 @@ class Agent:
             return []
         return self._registry.get_specs(self._tool_names)
 
-    async def run(self, messages: list[Message], response_format: dict[str, Any] | None = None) -> AgentResponse:
+    async def run(
+        self,
+        messages: list[Message],
+        response_format: dict[str, Any] | None = None,
+        run_context: "RunContext | None" = None,
+    ) -> AgentResponse:
         """Execute a single agent turn, handling tool calls.
 
         Args:
             messages: The conversation history (excluding the system prompt).
             response_format: Optional litellm response_format (e.g. {"type": "json_object"}).
                 When set, tool calling is disabled to avoid provider conflicts.
+            run_context: Optional shared context for pause/cancel/event support.
 
         Returns:
             AgentResponse with the assistant's text reply and metadata.
@@ -100,6 +109,10 @@ class Agent:
         all_tool_calls: list[dict[str, Any]] = []
 
         for _ in range(self._max_tool_rounds + 1):
+            # Interrupt check between tool rounds
+            if run_context:
+                await run_context.check_pause()
+
             kwargs: dict[str, Any] = {
                 "model": self.model,
                 "messages": conversation,
@@ -154,6 +167,15 @@ class Agent:
 
                 tool_record = {"name": fn_name, "args": fn_args}
                 all_tool_calls.append(tool_record)
+
+                # Emit AGENT_TOOL_CALL event
+                if run_context:
+                    from agentagent.core.events import Event, EventType
+                    await run_context.event_bus.emit(Event(
+                        type=EventType.AGENT_TOOL_CALL,
+                        data={"agent": self.role, "tool": fn_name, "args": fn_args},
+                        project_id=run_context.project_id,
+                    ))
 
                 if self._registry:
                     tool = self._registry.get(fn_name)

@@ -11,16 +11,20 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Coroutine
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from pydantic import ValidationError
 
 from agentagent.config import CompanyConfig, WorkflowStep
 from agentagent.core.agent import Agent, Message
 from agentagent.core.events import Event, EventBus, EventType
-from agentagent.core.schemas import JSON_MODE, ComplexityClassification, GateEvaluation, parse_llm_json
+from agentagent.core.schemas import JSON_MODE, ComplexityClassification, GateEvaluation, MessageClassification, parse_llm_json
 from agentagent.core.team import Team, TeamOutput
 from agentagent.store.repository import Repository
+
+if TYPE_CHECKING:
+    from agentagent.core.events import RunContext
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +88,7 @@ class ProgramManager:
         project_id: str = "",
         escalation_handler: EscalationHandler | None = None,
         pause_event: asyncio.Event | None = None,
+        run_context: "RunContext | None" = None,
     ) -> None:
         self._config = config
         self._teams = teams
@@ -92,6 +97,7 @@ class ProgramManager:
         self._project_id = project_id
         self._escalation_handler = escalation_handler
         self._pause_event = pause_event
+        self._run_context = run_context
         self._state = WorkflowState()
         self._pm_agent = Agent(
             role="program_manager",
@@ -235,9 +241,14 @@ class ProgramManager:
 
     async def _execute_step(self, step_name: str, user_prompt: str) -> None:
         """Execute a single workflow step: run team → evaluate gate."""
-        # Block here while paused
-        if self._pause_event is not None:
+        # Block here while paused (prefer RunContext, fall back to raw event)
+        if self._run_context:
+            await self._run_context.check_pause()
+        elif self._pause_event is not None:
             await self._pause_event.wait()
+
+        # Check for pending user messages
+        await self._check_for_messages(step_name)
 
         step_state = self._state.steps[step_name]
         step_state.status = StepStatus.IN_PROGRESS
@@ -268,10 +279,15 @@ class ProgramManager:
             task=task,
             output_artifact_types=step_state.step.output,
             gate_criteria=step_state.step.gate_criteria.model_dump() if step_state.step.gate_criteria else None,
+            run_context=self._run_context,
         )
         step_state.team_output = output
         self._state.total_input_tokens += output.total_input_tokens
         self._state.total_output_tokens += output.total_output_tokens
+
+        # Post-execution file scan for execution steps
+        if step_name in self._EXECUTION_STEPS and self._run_context:
+            await self._scan_workspace_files()
 
         # Evaluate gate
         gate_result, gate_notes = await self._evaluate_gate(step_state, output)
@@ -436,6 +452,17 @@ class ProgramManager:
         parts.append(f"\n## Your team's purpose: {step_state.step.step}")
         parts.append(f"Produce: {', '.join(step_state.step.output)}")
 
+        # Execution-specific guidance: instruct agents to write actual files
+        if step_name in self._EXECUTION_STEPS:
+            parts.append(
+                "\n## File Output Guidance\n"
+                "You MUST write actual source code files using the file_system tool. "
+                "Do NOT just describe code in conversation — write it to files. "
+                "Organise files in a sensible directory structure. "
+                "Each file should be complete and self-contained. "
+                "After writing, verify by listing the directory."
+            )
+
         return "\n\n".join(parts)
 
     async def _evaluate_gate(
@@ -476,3 +503,124 @@ class ProgramManager:
             )
             # If we can't parse, approve with notes
             return GateResult.APPROVED_WITH_NOTES, resp.content
+
+    # ── User message processing ─────────────────────────────────
+
+    async def _check_for_messages(self, current_step: str) -> None:
+        """Drain the message queue and process any pending user messages.
+
+        Uses a lightweight PM agent call to classify the audience/action,
+        then acts accordingly.
+        """
+        if not self._run_context:
+            return
+
+        queue = self._run_context.message_queue
+        messages: list[dict[str, str]] = []
+        while not queue.empty():
+            try:
+                messages.append(queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+
+        for msg in messages:
+            action = msg.get("action", "message")
+
+            if self._event_bus:
+                await self._event_bus.emit(Event(
+                    type=EventType.USER_INPUT_RECEIVED,
+                    data={"action": action, "message": msg.get("message", ""), "step": current_step},
+                    project_id=self._project_id,
+                ))
+
+            if action == "veto":
+                step_state = self._state.steps.get(current_step)
+                if step_state and step_state.status == StepStatus.IN_PROGRESS:
+                    step_state.status = StepStatus.PENDING
+                    step_state.gate_result = GateResult.RETURNED
+                    step_state.gate_notes = f"User vetoed: {msg.get('message', '')}"
+                    logger.info("User vetoed step %s", current_step)
+
+            elif action == "skip":
+                step_state = self._state.steps.get(current_step)
+                if step_state:
+                    step_state.status = StepStatus.COMPLETED
+                    step_state.gate_result = GateResult.APPROVED_WITH_NOTES
+                    step_state.gate_notes = f"User skipped: {msg.get('message', '')}"
+                    step_state.team_output = TeamOutput(
+                        content=f"Step skipped by user: {msg.get('message', '')}",
+                        confidence=1.0,
+                        rounds_used=0,
+                    )
+                    logger.info("User skipped step %s", current_step)
+
+            elif action == "constrain":
+                # Inject constraint — store it so _build_task picks it up
+                self._state.steps[current_step].gate_notes += (
+                    f"\nUser constraint: {msg.get('message', '')}"
+                )
+
+            else:
+                # Classify audience of freeform messages
+                await self._route_user_message(msg, current_step)
+
+    async def _route_user_message(
+        self, msg: dict[str, str], current_step: str
+    ) -> None:
+        """Classify and route a freeform user message to the right scope."""
+        step_names = list(self._state.steps.keys())
+        classify_msg = [
+            Message(
+                role="user",
+                content=(
+                    f"A user sent this message during step '{current_step}':\n"
+                    f"\"{msg.get('message', '')}\"\n\n"
+                    f"Available steps: {step_names}\n\n"
+                    "Classify the audience:\n"
+                    "- \"current_step\" if the message is feedback/context for the current team\n"
+                    "- \"workflow\" if it changes the overall direction or requirements\n\n"
+                    'Respond with JSON: {{"audience": "current_step"|"workflow", '
+                    '"summary": "one-line summary"}}\n'
+                    "Return ONLY the JSON."
+                ),
+            )
+        ]
+        try:
+            resp = await self._pm_agent.run(classify_msg, response_format=JSON_MODE)
+            result = parse_llm_json(resp.content, MessageClassification)
+            if result.audience == "workflow":
+                # Inject as constraint across all pending steps
+                for name, step_state in self._state.steps.items():
+                    if step_state.status in (StepStatus.PENDING, StepStatus.IN_PROGRESS):
+                        step_state.gate_notes += f"\nUser message: {msg.get('message', '')}"
+            # For current_step, the message is appended as gate_notes for context
+            self._state.steps[current_step].gate_notes += (
+                f"\nUser input: {msg.get('message', '')}"
+            )
+        except (ValidationError, ValueError):
+            # Fallback: treat as current-step context
+            self._state.steps[current_step].gate_notes += (
+                f"\nUser input: {msg.get('message', '')}"
+            )
+
+    # ── File scanning ────────────────────────────────────────────
+
+    async def _scan_workspace_files(self) -> None:
+        """Scan the project workspace and emit ARTIFACT_CREATED events."""
+        if not self._run_context:
+            return
+        work_dir = Path(f"workspace/{self._run_context.project_id}")
+        if not work_dir.exists():
+            return
+        for path in sorted(work_dir.rglob("*")):
+            if path.is_file():
+                rel = str(path.relative_to(work_dir))
+                await self._run_context.event_bus.emit(Event(
+                    type=EventType.ARTIFACT_CREATED,
+                    data={
+                        "path": rel,
+                        "size": path.stat().st_size,
+                        "source": "file_scan",
+                    },
+                    project_id=self._run_context.project_id,
+                ))

@@ -151,3 +151,13 @@ class GateEvaluation(BaseModel):
     result: Literal["approved", "approved_with_notes", "returned"]
     notes: str = ""
     missing: list[str] = Field(default_factory=list)
+
+
+# ── Forum — Message Classification ──────────────────────────
+
+
+class MessageClassification(BaseModel):
+    """Audience classification for a user message during execution."""
+
+    audience: Literal["current_step", "workflow"]
+    summary: str = ""
