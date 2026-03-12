@@ -4,12 +4,13 @@ import type { Project, Decision, Artifact, ConfigInfo } from './api'
 import { useWebSocket } from './hooks/useWebSocket'
 import ProjectTabs from './components/ProjectTabs'
 import ProjectList from './components/ProjectList'
-import Pipeline from './components/Pipeline'
-import ActivityStream from './components/ActivityStream'
+import PipelineDAG from './components/PipelineDAG'
+import TimelineStream from './components/TimelineStream'
+import StepDetailPanel from './components/StepDetailPanel'
+import type { ContextTab } from './components/StepDetailPanel'
+import ToastRail from './components/ToastRail'
 import CommandPalette from './components/CommandPalette'
 import NewProjectModal from './components/NewProjectModal'
-import DecisionDrawer from './components/DecisionDrawer'
-import ArtifactDrawer from './components/ArtifactDrawer'
 import UserInput from './components/UserInput'
 
 type View = 'projects' | 'detail'
@@ -23,14 +24,12 @@ export default function App() {
   const [configs, setConfigs] = useState<ConfigInfo[]>([])
   const [selectedConfig, setSelectedConfig] = useState('')
   const [loading, setLoading] = useState(false)
-  const [selectedStep, setSelectedStep] = useState<string | null>(null)
-  const [pipelineCollapsed, setPipelineCollapsed] = useState(false)
+  const [selectedNode, setSelectedNode] = useState<string | null>(null)
+  const [contextTab, setContextTab] = useState<ContextTab>('decisions')
   const [showPalette, setShowPalette] = useState(false)
   const [showNewProject, setShowNewProject] = useState(false)
-  const [showDecisions, setShowDecisions] = useState(false)
-  const [showArtifacts, setShowArtifacts] = useState(false)
 
-  const { events, connected, send, clearEvents } = useWebSocket(project?.id ?? null)
+  const { events, toasts, connected, send, clearEvents, dismissToast } = useWebSocket(project?.id ?? null)
 
   // Load on mount
   useEffect(() => {
@@ -82,7 +81,7 @@ export default function App() {
     clearEvents()
     setDecisions([])
     setArtifacts([])
-    setSelectedStep(null)
+    setSelectedNode(null)
     try {
       const d = await getDecisions(p.id)
       setDecisions(d)
@@ -138,6 +137,15 @@ export default function App() {
     send(action, message)
   }, [send])
 
+  const handleVeto = useCallback((message: string) => {
+    send('message', message)
+  }, [send])
+
+  const handleToastNavigate = useCallback((stepName: string) => {
+    setSelectedNode(stepName)
+    setContextTab('decisions')
+  }, [])
+
   return (
     <div className="app">
       {/* ─── Navbar ─── */}
@@ -151,6 +159,25 @@ export default function App() {
           <ProjectTabs projects={allProjects} activeId={project?.id ?? null} onSelect={handleSelectProject} />
         </div>
         <div className="navbar-right">
+          {project && view === 'detail' && (
+            <>
+              <span className={`status-badge ${project.status}`}>{project.status}</span>
+              {project.status === 'running' && (
+                <button className="btn btn-outline btn-sm" onClick={handlePause}>⏸</button>
+              )}
+              {project.status === 'paused' && (
+                <button className="btn btn-outline btn-sm" onClick={handleResume}>▶</button>
+              )}
+              {(project.status === 'running' || project.status === 'paused') && (
+                <button className="btn btn-danger-outline btn-sm" onClick={handleKill}>⏹</button>
+              )}
+              <div className="navbar-divider" />
+              <span className="navbar-stats">
+                {project.total_input_tokens.toLocaleString()} / {project.total_output_tokens.toLocaleString()} · ${project.estimated_cost.toFixed(4)}
+              </span>
+              <div className="navbar-divider" />
+            </>
+          )}
           <select
             className="config-select"
             value={selectedConfig}
@@ -159,7 +186,7 @@ export default function App() {
             {configs.map(c => <option key={c.path} value={c.path}>{c.name}</option>)}
           </select>
           <button className="btn btn-primary btn-sm" onClick={() => setShowNewProject(true)}>
-            + New Project
+            + New
           </button>
           <button className="btn-icon cmd-k" onClick={() => setShowPalette(true)} title="⌘K">
             ⌘K
@@ -174,60 +201,47 @@ export default function App() {
           <ProjectList projects={allProjects} onSelect={handleSelectProject} onNew={() => setShowNewProject(true)} />
         ) : project ? (
           <>
-            {/* Toolbar */}
-            <div className="toolbar">
-              <div className="toolbar-left">
-                <h2 className="toolbar-title">{project.prompt.slice(0, 80)}</h2>
-                <span className={`status-badge ${project.status}`}>{project.status}</span>
-                <span className="toolbar-config">{project.config_name}</span>
-              </div>
-              <div className="toolbar-right">
-                {project.status === 'running' && (
-                  <button className="btn btn-outline btn-sm" onClick={handlePause}>⏸ Pause</button>
-                )}
-                {project.status === 'paused' && (
-                  <button className="btn btn-outline btn-sm" onClick={handleResume}>▶ Resume</button>
-                )}
-                {(project.status === 'running' || project.status === 'paused') && (
-                  <button className="btn btn-danger-outline btn-sm" onClick={handleKill}>⏹ Kill</button>
-                )}
-                <div className="toolbar-divider" />
-                <button
-                  className={`btn btn-ghost btn-sm ${showDecisions ? 'active' : ''}`}
-                  onClick={() => { setShowDecisions(v => !v); setShowArtifacts(false) }}
-                >
-                  Decisions{decisions.length > 0 ? ` (${decisions.length})` : ''}
-                </button>
-                <button
-                  className={`btn btn-ghost btn-sm ${showArtifacts ? 'active' : ''}`}
-                  onClick={() => { setShowArtifacts(v => !v); setShowDecisions(false) }}
-                >
-                  Artifacts{artifacts.length > 0 ? ` (${artifacts.length})` : ''}
-                </button>
-                <div className="toolbar-divider" />
-                <span className="toolbar-stats">
-                  {project.total_input_tokens.toLocaleString()} in / {project.total_output_tokens.toLocaleString()} out · ${project.estimated_cost.toFixed(4)}
-                </span>
-              </div>
+            {/* DAG pipeline strip */}
+            <div className="dag-strip">
+              <PipelineDAG
+                events={events}
+                selectedNode={selectedNode}
+                onSelectNode={setSelectedNode}
+              />
             </div>
 
-            {/* Two-panel layout */}
-            <div className="panels">
-              <Pipeline
-                events={events}
-                selectedStep={selectedStep}
-                onSelectStep={setSelectedStep}
-                collapsed={pipelineCollapsed}
-                onToggleCollapse={() => setPipelineCollapsed(v => !v)}
-              />
-              <div className="stream-panel">
-                <ActivityStream events={events} selectedStep={selectedStep} />
-                <UserInput onSend={handleSend} disabled={!project} />
+            {/* Split main: Timeline + Context Panel */}
+            <div className="split-main">
+              <div className="timeline-panel">
+                <TimelineStream
+                  events={events}
+                  selectedStep={selectedNode}
+                  onNavigateToDecision={() => {
+                    setContextTab('decisions')
+                  }}
+                />
               </div>
+              <StepDetailPanel
+                selectedNode={selectedNode}
+                events={events}
+                decisions={decisions}
+                artifacts={artifacts}
+                onVeto={handleVeto}
+                contextTab={contextTab}
+                onChangeTab={setContextTab}
+              />
+            </div>
+
+            {/* Input bar */}
+            <div className="input-strip">
+              <UserInput onSend={handleSend} disabled={!project} />
             </div>
           </>
         ) : null}
       </main>
+
+      {/* ─── Toast Rail ─── */}
+      <ToastRail toasts={toasts} onDismiss={dismissToast} onNavigate={handleToastNavigate} />
 
       {/* ─── Overlays ─── */}
       {showPalette && (
@@ -254,8 +268,6 @@ export default function App() {
           loading={loading}
         />
       )}
-      {showDecisions && <DecisionDrawer decisions={decisions} onClose={() => setShowDecisions(false)} />}
-      {showArtifacts && <ArtifactDrawer artifacts={artifacts} onClose={() => setShowArtifacts(false)} />}
     </div>
   )
 }

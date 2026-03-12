@@ -100,3 +100,35 @@ export async function listConfigs(): Promise<ConfigInfo[]> {
   const res = await fetch(`${API_BASE}/configs`)
   return res.json()
 }
+
+export interface Escalation {
+  id: string
+  message: string
+  data: Record<string, unknown>
+  status: string
+  created_at: string
+}
+
+export interface FileInfo {
+  path: string
+  size: number
+}
+
+export async function getEscalations(projectId: string): Promise<Escalation[]> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/escalations`)
+  return res.json()
+}
+
+export async function getFiles(projectId: string): Promise<FileInfo[]> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/files`)
+  return res.json()
+}
+
+export async function setMode(projectId: string, mode: 'interactive' | 'autonomous'): Promise<{ status?: string; mode?: string }> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/mode`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  })
+  return res.json()
+}
