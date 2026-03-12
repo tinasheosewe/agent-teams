@@ -641,6 +641,18 @@ body {
   background: var(--bg-secondary);
   box-shadow: var(--shadow-sm);
 }
+.team-section.fast-tracked {
+  margin-bottom: 6px;
+  opacity: 0.7;
+}
+.team-section.fast-tracked .team-section-header {
+  padding: 8px 16px;
+  cursor: default;
+  border-bottom: none;
+}
+.team-section.fast-tracked .team-section-name {
+  font-size: 13px;
+}
 
 .team-section-header {
   display: flex;

@@ -138,11 +138,18 @@ class ProgramManager:
         """Get all steps that are ready to execute (dependencies met)."""
         return [name for name in self._state.steps if self._is_step_ready(name)]
 
+    # Steps that actually build the product — never skipped
+    _EXECUTION_STEPS = frozenset({"engineering", "qa"})
+
     async def run_workflow(self, user_prompt: str) -> WorkflowState:
         """Execute the full workflow pipeline.
 
         Runs steps in dependency order, executes parallel steps concurrently,
         evaluates gates, and handles failures.
+
+        For simple requests the planning steps (management, product, design,
+        architecture) are auto-completed with a brief stub so the workflow
+        jumps straight to engineering.
         """
         if self._event_bus:
             await self._event_bus.emit(Event(
@@ -150,6 +157,10 @@ class ProgramManager:
                 data={"message": "Workflow started", "prompt": user_prompt[:200]},
                 project_id=self._project_id,
             ))
+
+        # ── Fast-track simple requests ──
+        if self._is_simple_request(user_prompt):
+            await self._fast_track_planning(user_prompt)
 
         max_iterations = len(self._config.workflow) * 3  # Allow for retries
 
@@ -312,6 +323,80 @@ class ProgramManager:
                         {"step": step_name, "notes": gate_notes},
                     )
                 step_state.status = StepStatus.FAILED
+
+    # ── Fast-track helpers ──────────────────────────────────────
+
+    def _is_simple_request(self, prompt: str) -> bool:
+        """Heuristic check: is this a simple/trivial project request?
+
+        Simple = short prompt with no complex domain language.  We look at
+        word count and the absence of enterprise-scale keywords.
+        """
+        words = prompt.strip().split()
+        # Very short prompts are almost certainly simple
+        if len(words) <= 12:
+            return True
+        # Longer but still simple if no complex keywords
+        complex_keywords = {
+            "microservic", "distribut", "kubernetes", "orchestrat",
+            "enterprise", "multi-tenant", "scalab", "real-time stream",
+            "machine learning", "blockchain", "payment", "authentication",
+            "oauth", "saas", "marketplace", "e-commerce",
+        }
+        lower = prompt.lower()
+        if any(kw in lower for kw in complex_keywords):
+            return False
+        # Medium-length prompts: still simple if under ~30 words
+        return len(words) <= 30
+
+    async def _fast_track_planning(self, user_prompt: str) -> None:
+        """Auto-complete all planning steps with brief stubs.
+
+        Marks every non-execution step as COMPLETED with a minimal
+        TeamOutput so that dependency checks pass and the workflow
+        jumps straight to engineering / qa.
+        """
+        logger.info("Fast-tracking planning steps for simple request")
+
+        stub_content = (
+            f"Simple project — fast-tracked.\n\n"
+            f"Request: {user_prompt}\n\n"
+            f"Build exactly what was asked for, nothing more. "
+            f"Keep it minimal and straightforward."
+        )
+
+        for step_name, step_state in self._state.steps.items():
+            if step_name in self._EXECUTION_STEPS:
+                continue
+            # Auto-complete with stub
+            step_state.status = StepStatus.COMPLETED
+            step_state.gate_result = GateResult.APPROVED
+            step_state.gate_notes = "Fast-tracked (simple request)"
+            step_state.team_output = TeamOutput(
+                content=stub_content,
+                confidence=1.0,
+                rounds_used=0,
+            )
+
+            if self._event_bus:
+                await self._event_bus.emit(Event(
+                    type=EventType.WORKFLOW_STEP_START,
+                    data={
+                        "step": step_name,
+                        "gate": step_state.step.gate,
+                        "attempt": 0,
+                    },
+                    project_id=self._project_id,
+                ))
+                await self._event_bus.emit(Event(
+                    type=EventType.WORKFLOW_STEP_COMPLETE,
+                    data={
+                        "step": step_name,
+                        "gate": step_state.step.gate,
+                        "fast_tracked": True,
+                    },
+                    project_id=self._project_id,
+                ))
 
     def _build_task(self, step_name: str, user_prompt: str) -> str:
         """Build the task description including upstream context."""

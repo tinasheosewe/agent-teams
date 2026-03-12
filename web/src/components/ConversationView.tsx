@@ -48,6 +48,7 @@ interface TeamSection {
   status: 'in_progress' | 'completed' | 'failed'
   mode?: string
   task?: string
+  fastTracked?: boolean
   events: WsEvent[]
 }
 
@@ -72,6 +73,7 @@ function buildTeamSections(events: WsEvent[]): { sections: TeamSection[]; traili
 
     if (evt.type === 'workflow_step_complete' && current && String(evt.data.step) === current.stepName) {
       current.status = 'completed'
+      if (evt.data.fast_tracked) current.fastTracked = true
       current.events.push(evt)
       current = null
       continue
@@ -192,6 +194,25 @@ export default function TeamActivityView({ events, selectedStep }: Props) {
         const isOpen = !collapsed.has(section.id)
         const color = hashColor(section.teamName)
         const rounds = buildRounds(section.events)
+
+        // Fast-tracked steps get a compact one-line display
+        if (section.fastTracked) {
+          return (
+            <div className="team-section fast-tracked" key={section.id}>
+              <div className="team-section-header">
+                <div className="team-color-stripe" style={{ background: color, opacity: 0.5 }} />
+                <div className="team-section-info">
+                  <div className="team-section-name">{section.stepName}</div>
+                  <div className="team-section-meta">
+                    <span className="badge active">skipped</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>fast-tracked (simple request)</span>
+                  </div>
+                </div>
+                <span style={{ fontSize: 16, opacity: 0.5 }}>&#x26A1;</span>
+              </div>
+            </div>
+          )
+        }
 
         return (
           <div className="team-section" key={section.id}>
