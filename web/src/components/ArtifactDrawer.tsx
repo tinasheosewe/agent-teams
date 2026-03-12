@@ -9,13 +9,13 @@ interface Props {
 
 function artIcon(type: string): string {
   const t = type.toLowerCase()
-  if (t.includes('code') || t.includes('implementation')) return '💻'
-  if (t.includes('doc') || t.includes('spec') || t.includes('readme')) return '📝'
-  if (t.includes('design') || t.includes('ui') || t.includes('ux')) return '🎨'
-  if (t.includes('test')) return '🧪'
-  if (t.includes('config') || t.includes('infra')) return '⚙️'
-  if (t.includes('plan') || t.includes('architecture')) return '🏗️'
-  return '📄'
+  if (t.includes('code') || t.includes('implementation')) return '{ }'
+  if (t.includes('doc') || t.includes('spec') || t.includes('readme')) return '¶'
+  if (t.includes('design') || t.includes('ui') || t.includes('ux')) return '◑'
+  if (t.includes('test')) return '⊘'
+  if (t.includes('config') || t.includes('infra')) return '⚙'
+  if (t.includes('plan') || t.includes('architecture')) return '△'
+  return '□'
 }
 
 export default function ArtifactDrawer({ artifacts, onClose }: Props) {
@@ -31,7 +31,7 @@ export default function ArtifactDrawer({ artifacts, onClose }: Props) {
         <div className="drawer-body">
           {artifacts.length === 0 ? (
             <div className="empty-state" style={{ padding: 48 }}>
-              <div className="empty-state-icon">📦</div>
+              <div className="empty-state-icon">◻</div>
               <div className="empty-state-title">No artifacts yet</div>
             </div>
           ) : artifacts.map(a => {

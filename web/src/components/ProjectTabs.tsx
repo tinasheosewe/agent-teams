@@ -7,11 +7,11 @@ interface Props {
 }
 
 function statusColor(s: string): string {
-  if (s === 'running') return 'var(--color-success)'
-  if (s === 'completed') return 'var(--color-text-muted)'
-  if (s === 'failed') return 'var(--color-danger)'
-  if (s === 'paused') return 'var(--color-warning)'
-  return 'var(--color-border)'
+  if (s === 'running') return 'var(--green)'
+  if (s === 'completed') return 'var(--text-3)'
+  if (s === 'failed') return 'var(--red)'
+  if (s === 'paused') return 'var(--yellow)'
+  return 'var(--border)'
 }
 
 export default function ProjectTabs({ projects, activeId, onSelect }: Props) {

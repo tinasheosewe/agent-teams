@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import type { WsEvent } from '../hooks/useWebSocket'
 
-const PALETTE = ['#635BFF', '#0A8D48', '#C58900', '#DF1B41', '#0073E6', '#7A5AF8', '#E56910', '#067D62']
+const PALETTE = ['#818cf8', '#34d399', '#fbbf24', '#f87171', '#60a5fa', '#a78bfa', '#fb923c', '#2dd4bf']
 
 function hashIdx(name: string): number {
   let h = 0

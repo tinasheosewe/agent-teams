@@ -3,7 +3,7 @@ import Markdown from 'react-markdown'
 import type { WsEvent } from '../hooks/useWebSocket'
 
 /* ─── Helpers ─── */
-const PALETTE = ['#635BFF', '#0A8D48', '#C58900', '#DF1B41', '#0073E6', '#7A5AF8', '#E56910', '#067D62']
+const PALETTE = ['#818cf8', '#34d399', '#fbbf24', '#f87171', '#60a5fa', '#a78bfa', '#fb923c', '#2dd4bf']
 
 function hashIdx(name: string): number {
   let h = 0
@@ -144,7 +144,7 @@ export default function ActivityStream({ events, selectedStep }: Props) {
   if (events.length === 0) {
     return (
       <div className="empty-state stream-empty">
-        <div className="empty-state-icon">🚀</div>
+        <div className="empty-state-icon">▸</div>
         <div className="empty-state-title">Launch a project to begin</div>
         <p className="empty-state-text">Activity will appear here in real time.</p>
       </div>
@@ -278,7 +278,7 @@ function EventRow({ event, teamColor }: { event: WsEvent; teamColor: string }) {
   if (event.type === 'team_mode_selected') {
     return (
       <div className="sys-event">
-        <span className="sys-icon">🎯</span>
+        <span className="sys-icon">◆</span>
         <span>Mode: <strong>{String(d.mode)}</strong></span>
       </div>
     )
@@ -287,7 +287,7 @@ function EventRow({ event, teamColor }: { event: WsEvent; teamColor: string }) {
   if (event.type === 'team_task_assigned') {
     return (
       <div className="sys-event">
-        <span className="sys-icon">📋</span>
+        <span className="sys-icon">▤</span>
         <div className="markdown-body">
           <Markdown>{`**Tasks assigned:**\n\`\`\`json\n${JSON.stringify(d.subtasks, null, 2)}\n\`\`\``}</Markdown>
         </div>
@@ -298,7 +298,7 @@ function EventRow({ event, teamColor }: { event: WsEvent; teamColor: string }) {
   if (event.type === 'decision_made') {
     return (
       <div className="sys-event">
-        <span className="sys-icon">✅</span>
+        <span className="sys-icon">✓</span>
         <div className="markdown-body"><Markdown>{`**Decision:** ${d.decision}`}</Markdown></div>
       </div>
     )
@@ -307,20 +307,20 @@ function EventRow({ event, teamColor }: { event: WsEvent; teamColor: string }) {
   if (event.type === 'artifact_created') {
     return (
       <div className="sys-event">
-        <span className="sys-icon">📄</span>
+        <span className="sys-icon">□</span>
         <span>Artifact <strong>{String(d.artifact_type)}</strong> created</span>
       </div>
     )
   }
 
   if (event.type === 'forum_escalation') {
-    return <div className="escalation">⚠️ {String(d.message)}</div>
+    return <div className="escalation">▲ {String(d.message)}</div>
   }
 
   if (event.type === 'agent_tool_call') {
     return (
       <div className="sys-event">
-        <span className="sys-icon">🔧</span>
+        <span className="sys-icon">⚡</span>
         <span><strong>{String(d.agent || '')}</strong> called <strong>{String(d.tool || '')}</strong></span>
       </div>
     )
@@ -355,10 +355,10 @@ function SystemEventRow({ event }: { event: WsEvent }) {
 
   let icon = '•'
   let text = ''
-  if (event.type === 'workflow_step_start' && d.message) { icon = '🚀'; text = String(d.message) }
-  else if (event.type === 'workflow_step_start' && d.step) { icon = '🚀'; text = `Step **${d.step}** started` }
-  else if (event.type === 'forum_escalation') { icon = '⚠️'; text = String(d.message) }
-  else if (event.type === 'agent_message') { icon = '💬'; text = String(d.content || '') }
+  if (event.type === 'workflow_step_start' && d.message) { icon = '▸'; text = String(d.message) }
+  else if (event.type === 'workflow_step_start' && d.step) { icon = '▸'; text = `Step **${d.step}** started` }
+  else if (event.type === 'forum_escalation') { icon = '▲'; text = String(d.message) }
+  else if (event.type === 'agent_message') { icon = '›'; text = String(d.content || '') }
   else { text = Object.entries(d).filter(([, v]) => v != null).map(([k, v]) => `**${k}:** ${v}`).join(' · ') }
 
   return (

@@ -8,9 +8,9 @@ interface Props {
 }
 
 function confColor(c: number): string {
-  if (c >= 0.8) return 'var(--color-success)'
-  if (c >= 0.5) return 'var(--color-warning)'
-  return 'var(--color-danger)'
+  if (c >= 0.8) return 'var(--green)'
+  if (c >= 0.5) return 'var(--yellow)'
+  return 'var(--red)'
 }
 
 export default function DecisionDrawer({ decisions, onClose }: Props) {
@@ -26,7 +26,7 @@ export default function DecisionDrawer({ decisions, onClose }: Props) {
         <div className="drawer-body">
           {decisions.length === 0 ? (
             <div className="empty-state" style={{ padding: 48 }}>
-              <div className="empty-state-icon">⚖️</div>
+              <div className="empty-state-icon">⇌</div>
               <div className="empty-state-title">No decisions yet</div>
             </div>
           ) : decisions.map(d => {

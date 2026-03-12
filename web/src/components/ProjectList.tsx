@@ -29,7 +29,7 @@ export default function ProjectList({ projects, onSelect, onNew }: Props) {
 
       {projects.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-state-icon">📂</div>
+          <div className="empty-state-icon">◻</div>
           <div className="empty-state-title">No projects yet</div>
           <p className="empty-state-text">Create your first project to get started.</p>
           <button className="btn btn-primary btn-sm" onClick={onNew}>+ New Project</button>
