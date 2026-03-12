@@ -159,7 +159,7 @@ class ProgramManager:
             ))
 
         # ── Fast-track simple requests ──
-        if self._is_simple_request(user_prompt):
+        if await self._is_simple_request(user_prompt):
             await self._fast_track_planning(user_prompt)
 
         max_iterations = len(self._config.workflow) * 3  # Allow for retries
@@ -326,28 +326,35 @@ class ProgramManager:
 
     # ── Fast-track helpers ──────────────────────────────────────
 
-    def _is_simple_request(self, prompt: str) -> bool:
-        """Heuristic check: is this a simple/trivial project request?
+    async def _is_simple_request(self, prompt: str) -> bool:
+        """Ask the PM agent whether this request is simple enough to skip planning.
 
-        Simple = short prompt with no complex domain language.  We look at
-        word count and the absence of enterprise-scale keywords.
+        Returns True if the LLM judges the request as simple/trivial.
+        Falls back to False (full pipeline) on any error.
         """
-        words = prompt.strip().split()
-        # Very short prompts are almost certainly simple
-        if len(words) <= 12:
-            return True
-        # Longer but still simple if no complex keywords
-        complex_keywords = {
-            "microservic", "distribut", "kubernetes", "orchestrat",
-            "enterprise", "multi-tenant", "scalab", "real-time stream",
-            "machine learning", "blockchain", "payment", "authentication",
-            "oauth", "saas", "marketplace", "e-commerce",
-        }
-        lower = prompt.lower()
-        if any(kw in lower for kw in complex_keywords):
+        messages = [
+            Message(
+                role="user",
+                content=(
+                    "You are a project complexity classifier. Given the following "
+                    "project request, decide whether it is SIMPLE or COMPLEX.\n\n"
+                    "SIMPLE = can be built in a single sitting with no meaningful "
+                    "design, architecture, or product planning needed. Examples: "
+                    "hello world, calculator, to-do list, counter app, static page.\n\n"
+                    "COMPLEX = needs real planning, design decisions, multiple "
+                    "components, APIs, authentication, data modelling, etc.\n\n"
+                    f"Request: {prompt}\n\n"
+                    'Respond with ONLY this JSON: {"complexity": "simple"} or {"complexity": "complex"}'
+                ),
+            )
+        ]
+        try:
+            resp = await self._pm_agent.run(messages, response_format=JSON_MODE)
+            parsed = parse_llm_json(resp.content)
+            return str(parsed.get("complexity", "")).lower().strip() == "simple"
+        except Exception:
+            logger.warning("Complexity classification failed, using full pipeline")
             return False
-        # Medium-length prompts: still simple if under ~30 words
-        return len(words) <= 30
 
     async def _fast_track_planning(self, user_prompt: str) -> None:
         """Auto-complete all planning steps with brief stubs.
