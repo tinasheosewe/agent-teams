@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import Markdown from 'react-markdown'
 import type { Decision } from '../api'
 
 interface Props {
@@ -11,38 +13,62 @@ function confidenceColor(c: number): string {
 }
 
 export default function DecisionLog({ decisions }: Props) {
+  const [expanded, setExpanded] = useState<string | null>(null)
+
   if (decisions.length === 0) {
-    return <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>No decisions yet.</p>
+    return (
+      <div className="empty-state" style={{ height: 'auto', padding: 24 }}>
+        <div style={{ fontSize: 32, opacity: 0.3 }}>&#x2696;</div>
+        <div className="empty-state-text">No decisions yet</div>
+      </div>
+    )
   }
 
   return (
     <div>
-      {decisions.map((d) => (
-        <div key={d.id} className="decision-item">
-          <div className="decision-topic">
-            {d.topic}
-            <span className={`badge ${d.status}`} style={{ marginLeft: 8 }}>
-              {d.status}
-            </span>
+      {decisions.map((d) => {
+        const isOpen = expanded === d.id
+        return (
+          <div key={d.id} className="decision-card">
+            <div
+              className="decision-card-header"
+              onClick={() => setExpanded(isOpen ? null : d.id)}
+            >
+              <span className={`decision-card-toggle ${isOpen ? 'open' : ''}`}>&#x25B6;</span>
+              <span className="decision-card-topic">{d.topic}</span>
+              <span className={`badge ${d.status}`}>{d.status}</span>
+            </div>
+
+            <div className="decision-card-text markdown-body">
+              <Markdown>{d.decision}</Markdown>
+            </div>
+
+            {isOpen && d.rationale && (
+              <div className="decision-card-rationale markdown-body">
+                <Markdown>{d.rationale}</Markdown>
+              </div>
+            )}
+
+            <div className="decision-card-footer">
+              <span className="decision-team-label">{d.team}</span>
+              <div className="confidence-meter">
+                <span className="confidence-label" style={{ color: confidenceColor(d.confidence) }}>
+                  {(d.confidence * 100).toFixed(0)}%
+                </span>
+                <div className="confidence-track">
+                  <div
+                    className="confidence-bar"
+                    style={{
+                      width: `${d.confidence * 100}%`,
+                      background: confidenceColor(d.confidence),
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
           </div>
-          <div className="decision-text">{d.decision}</div>
-          <div className="decision-meta">
-            <span>{d.team}</span>
-            <span>
-              {(d.confidence * 100).toFixed(0)}%
-              <span className="confidence-bar">
-                <span
-                  className="confidence-fill"
-                  style={{
-                    width: `${d.confidence * 100}%`,
-                    background: confidenceColor(d.confidence),
-                  }}
-                />
-              </span>
-            </span>
-          </div>
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

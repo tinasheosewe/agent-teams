@@ -6,6 +6,7 @@ handles user interaction, and tracks costs.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -44,6 +45,7 @@ class ProjectState:
     id: str
     prompt: str
     config_name: str
+    config_path: str = ""
     status: ProjectStatus = ProjectStatus.CREATED
     workflow_state: WorkflowState | None = None
     total_input_tokens: int = 0
@@ -70,6 +72,9 @@ class Orchestrator:
         self._projects: dict[str, ProjectState] = {}
         self._event_bus = EventBus()
         self._pending_escalations: dict[str, list[dict[str, Any]]] = {}
+        self._tasks: dict[str, asyncio.Task[Any]] = {}
+        self._pause_events: dict[str, asyncio.Event] = {}
+        self._cancel_flags: dict[str, bool] = {}
 
     @property
     def event_bus(self) -> EventBus:
@@ -96,6 +101,7 @@ class Orchestrator:
             id=project_id,
             prompt=prompt,
             config_name=config.name,
+            config_path=config_path,
         )
         self._projects[project_id] = state
 
@@ -202,6 +208,7 @@ class Orchestrator:
             event_bus=self._event_bus,
             project_id=state.id,
             escalation_handler=escalation_handler,
+            pause_event=self._pause_events.get(state.id),
         )
 
         workflow_state = await pm.run_workflow(state.prompt)
@@ -255,6 +262,83 @@ class Orchestrator:
 
     def get_escalations(self, project_id: str) -> list[dict[str, Any]]:
         return self._pending_escalations.get(project_id, [])
+
+    def register_task(self, project_id: str, task: asyncio.Task[Any]) -> None:
+        """Register a background task for a project so it can be controlled."""
+        self._tasks[project_id] = task
+        evt = asyncio.Event()
+        evt.set()  # Start unpaused
+        self._pause_events[project_id] = evt
+        self._cancel_flags[project_id] = False
+
+    async def pause_project(self, project_id: str) -> dict[str, str]:
+        """Pause a running project."""
+        state = self._projects.get(project_id)
+        if not state:
+            return {"error": "Project not found"}
+        if state.status != ProjectStatus.RUNNING:
+            return {"error": f"Project is {state.status.value}, not running"}
+        evt = self._pause_events.get(project_id)
+        if evt:
+            evt.clear()  # Block next check_pause call
+        state.status = ProjectStatus.PAUSED
+        return {"status": "paused"}
+
+    async def resume_project(self, project_id: str) -> dict[str, str]:
+        """Resume a paused project."""
+        state = self._projects.get(project_id)
+        if not state:
+            return {"error": "Project not found"}
+        if state.status != ProjectStatus.PAUSED:
+            return {"error": f"Project is {state.status.value}, not paused"}
+        state.status = ProjectStatus.RUNNING
+        evt = self._pause_events.get(project_id)
+        if evt:
+            evt.set()  # Unblock
+        return {"status": "running"}
+
+    async def kill_project(self, project_id: str) -> dict[str, str]:
+        """Kill (cancel) a running or paused project."""
+        state = self._projects.get(project_id)
+        if not state:
+            return {"error": "Project not found"}
+        if state.status not in (ProjectStatus.RUNNING, ProjectStatus.PAUSED):
+            return {"error": f"Project is {state.status.value}, cannot kill"}
+        self._cancel_flags[project_id] = True
+        # Unblock if paused so the task can see the cancel flag
+        evt = self._pause_events.get(project_id)
+        if evt:
+            evt.set()
+        task = self._tasks.get(project_id)
+        if task and not task.done():
+            task.cancel()
+        state.status = ProjectStatus.FAILED
+        return {"status": "killed"}
+
+    def list_configs(self) -> list[dict[str, str]]:
+        """List available configuration files."""
+        overlays_dir = Path("configs/overlays")
+        configs: list[dict[str, str]] = []
+        if not overlays_dir.exists():
+            return configs
+        for f in sorted(overlays_dir.glob("*.yaml")):
+            try:
+                import yaml
+                with f.open() as fh:
+                    raw = yaml.safe_load(fh)
+                name = raw.get("company", {}).get("name", f.stem)
+                desc = raw.get("company", {}).get("description", "")
+                teams_list = raw.get("company", {}).get("teams", [])
+                team_names = [t.get("name", "") for t in teams_list]
+                configs.append({
+                    "path": str(f),
+                    "name": name,
+                    "description": desc,
+                    "teams": team_names,
+                })
+            except Exception:
+                continue
+        return configs
 
     def _estimate_cost(self, input_tokens: int, output_tokens: int) -> float:
         return (

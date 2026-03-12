@@ -32,6 +32,13 @@ export interface Artifact {
   created_at: string
 }
 
+export interface ConfigInfo {
+  path: string
+  name: string
+  description: string
+  teams: string[]
+}
+
 export async function createProject(prompt: string, configPath?: string): Promise<Project> {
   const res = await fetch(`${API_BASE}/projects`, {
     method: 'POST',
@@ -72,4 +79,24 @@ export async function sendMessage(projectId: string, message: string, action: st
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message, action }),
   })
+}
+
+export async function pauseProject(projectId: string): Promise<{ status?: string; error?: string }> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/pause`, { method: 'POST' })
+  return res.json()
+}
+
+export async function resumeProject(projectId: string): Promise<{ status?: string; error?: string }> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/resume`, { method: 'POST' })
+  return res.json()
+}
+
+export async function killProject(projectId: string): Promise<{ status?: string; error?: string }> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/kill`, { method: 'POST' })
+  return res.json()
+}
+
+export async function listConfigs(): Promise<ConfigInfo[]> {
+  const res = await fetch(`${API_BASE}/configs`)
+  return res.json()
 }

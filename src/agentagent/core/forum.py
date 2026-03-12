@@ -83,6 +83,7 @@ class ProgramManager:
         event_bus: EventBus | None = None,
         project_id: str = "",
         escalation_handler: EscalationHandler | None = None,
+        pause_event: asyncio.Event | None = None,
     ) -> None:
         self._config = config
         self._teams = teams
@@ -90,6 +91,7 @@ class ProgramManager:
         self._event_bus = event_bus
         self._project_id = project_id
         self._escalation_handler = escalation_handler
+        self._pause_event = pause_event
         self._state = WorkflowState()
         self._pm_agent = Agent(
             role="program_manager",
@@ -222,6 +224,10 @@ class ProgramManager:
 
     async def _execute_step(self, step_name: str, user_prompt: str) -> None:
         """Execute a single workflow step: run team → evaluate gate."""
+        # Block here while paused
+        if self._pause_event is not None:
+            await self._pause_event.wait()
+
         step_state = self._state.steps[step_name]
         step_state.status = StepStatus.IN_PROGRESS
         step_state.attempts += 1

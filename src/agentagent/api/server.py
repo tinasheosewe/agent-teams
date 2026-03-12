@@ -118,7 +118,8 @@ async def run_project(project_id: str) -> ProjectResponse:
         )
 
     # Run in background so the REST call returns immediately
-    asyncio.create_task(_run_project_background(orch, project_id))
+    task = asyncio.create_task(_run_project_background(orch, project_id))
+    orch.register_task(project_id, task)
 
     return ProjectResponse(
         id=state.id,
@@ -207,6 +208,34 @@ async def send_message(project_id: str, req: UserMessageRequest) -> dict:
     """Send a user message (participate, veto, skip, constrain)."""
     orch = get_orchestrator()
     return await orch.send_user_message(project_id, req.message, req.action)
+
+
+@app.post("/api/projects/{project_id}/pause")
+async def pause_project(project_id: str) -> dict:
+    """Pause a running project."""
+    orch = get_orchestrator()
+    return await orch.pause_project(project_id)
+
+
+@app.post("/api/projects/{project_id}/resume")
+async def resume_project(project_id: str) -> dict:
+    """Resume a paused project."""
+    orch = get_orchestrator()
+    return await orch.resume_project(project_id)
+
+
+@app.post("/api/projects/{project_id}/kill")
+async def kill_project(project_id: str) -> dict:
+    """Kill (cancel) a running or paused project."""
+    orch = get_orchestrator()
+    return await orch.kill_project(project_id)
+
+
+@app.get("/api/configs")
+async def list_configs() -> list[dict]:
+    """List available configuration files."""
+    orch = get_orchestrator()
+    return orch.list_configs()
 
 
 # ── WebSocket ────────────────────────────────────────────────
