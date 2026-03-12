@@ -44,6 +44,22 @@ class QuestionStatus(str, enum.Enum):
     DEFERRED = "deferred"
 
 
+class ProjectRecord(Base):
+    __tablename__ = "projects"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    prompt: Mapped[str] = mapped_column(Text)
+    config_name: Mapped[str] = mapped_column(String(256))
+    config_path: Mapped[str] = mapped_column(String(512), default="")
+    status: Mapped[str] = mapped_column(String(32), default="created")
+    total_input_tokens: Mapped[int] = mapped_column(default=0)
+    total_output_tokens: Mapped[int] = mapped_column(default=0)
+    estimated_cost: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+
 class Decision(Base):
     __tablename__ = "decisions"
 

@@ -31,7 +31,7 @@ fi
 
 # ── Start backend ──
 echo "🚀 Starting backend on :8000..."
-python -m agentagent.cli serve --port 8000 &
+PYTHONPATH="${DIR}/src${PYTHONPATH:+:$PYTHONPATH}" python -m agentagent.cli serve --port 8000 &
 BACKEND_PID=$!
 
 # ── Start frontend ──

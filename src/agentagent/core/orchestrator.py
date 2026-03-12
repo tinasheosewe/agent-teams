@@ -19,6 +19,7 @@ from agentagent.core.events import Event, EventBus, EventType
 from agentagent.core.forum import ProgramManager, WorkflowState
 from agentagent.core.team import Team, TeamOutput
 from agentagent.store.database import Database
+from agentagent.store.models import ProjectRecord
 from agentagent.store.repository import Repository
 from agentagent.store.vector import VectorStore
 from agentagent.tools.builtin import create_default_registry
@@ -81,8 +82,30 @@ class Orchestrator:
         return self._event_bus
 
     async def initialize(self) -> None:
-        """Initialize the database."""
+        """Initialize the database and reload persisted projects."""
         await self._db.initialize()
+        await self._load_projects()
+
+    async def _load_projects(self) -> None:
+        """Load projects from the database into memory."""
+        records = await self._repo.list_projects()
+        for rec in records:
+            state = ProjectState(
+                id=rec.id,
+                prompt=rec.prompt,
+                config_name=rec.config_name,
+                config_path=rec.config_path,
+                status=ProjectStatus(rec.status) if rec.status in ProjectStatus.__members__.values() else ProjectStatus.FAILED,
+                total_input_tokens=rec.total_input_tokens,
+                total_output_tokens=rec.total_output_tokens,
+                estimated_cost=rec.estimated_cost,
+            )
+            # Mark previously-running/paused projects as failed (interrupted)
+            if state.status in (ProjectStatus.RUNNING, ProjectStatus.PAUSED):
+                state.status = ProjectStatus.FAILED
+                await self._repo.update_project(rec.id, status=ProjectStatus.FAILED.value)
+            self._projects[rec.id] = state
+        logger.info("Loaded %d projects from database", len(records))
 
     async def shutdown(self) -> None:
         await self._db.close()
@@ -105,6 +128,14 @@ class Orchestrator:
         )
         self._projects[project_id] = state
 
+        await self._repo.save_project(ProjectRecord(
+            id=project_id,
+            prompt=prompt,
+            config_name=config.name,
+            config_path=config_path,
+            status=state.status.value,
+        ))
+
         logger.info("Created project %s: %s", project_id, prompt[:100])
         return state
 
@@ -119,6 +150,7 @@ class Orchestrator:
             raise ValueError(f"Project not found: {project_id}")
 
         state.status = ProjectStatus.RUNNING
+        await self._repo.update_project(project_id, status=ProjectStatus.RUNNING.value)
         config = load_config(
             self._find_config_path(state.config_name)
         )
@@ -149,9 +181,11 @@ class Orchestrator:
                 state = await self._run_multi_team(state, config, teams)
         except Exception:
             state.status = ProjectStatus.FAILED
+            await self._persist_project_state(state)
             logger.exception("Project %s failed", project_id)
             raise
 
+        await self._persist_project_state(state)
         return state
 
     async def _run_single_team(
@@ -282,6 +316,7 @@ class Orchestrator:
         if evt:
             evt.clear()  # Block next check_pause call
         state.status = ProjectStatus.PAUSED
+        await self._repo.update_project(project_id, status=ProjectStatus.PAUSED.value)
         return {"status": "paused"}
 
     async def resume_project(self, project_id: str) -> dict[str, str]:
@@ -292,6 +327,7 @@ class Orchestrator:
         if state.status != ProjectStatus.PAUSED:
             return {"error": f"Project is {state.status.value}, not paused"}
         state.status = ProjectStatus.RUNNING
+        await self._repo.update_project(project_id, status=ProjectStatus.RUNNING.value)
         evt = self._pause_events.get(project_id)
         if evt:
             evt.set()  # Unblock
@@ -313,6 +349,7 @@ class Orchestrator:
         if task and not task.done():
             task.cancel()
         state.status = ProjectStatus.FAILED
+        await self._repo.update_project(project_id, status=ProjectStatus.FAILED.value)
         return {"status": "killed"}
 
     def list_configs(self) -> list[dict[str, str]]:
@@ -339,6 +376,16 @@ class Orchestrator:
             except Exception:
                 continue
         return configs
+
+    async def _persist_project_state(self, state: ProjectState) -> None:
+        """Persist current project state to the database."""
+        await self._repo.update_project(
+            state.id,
+            status=state.status.value,
+            total_input_tokens=state.total_input_tokens,
+            total_output_tokens=state.total_output_tokens,
+            estimated_cost=state.estimated_cost,
+        )
 
     def _estimate_cost(self, input_tokens: int, output_tokens: int) -> float:
         return (

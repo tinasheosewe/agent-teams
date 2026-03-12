@@ -17,6 +17,7 @@ from agentagent.store.models import (
     DecisionStatus,
     DiscussionSummary,
     OpenQuestion,
+    ProjectRecord,
     QuestionStatus,
     Transcript,
 )
@@ -29,6 +30,29 @@ class Repository:
     def __init__(self, db: Database, vector: VectorStore) -> None:
         self._db = db
         self._vector = vector
+
+    # ── Projects ──────────────────────────────────────────────
+
+    async def save_project(self, record: ProjectRecord) -> None:
+        async with self._db.session() as session:
+            merged = await session.merge(record)
+            await session.commit()
+
+    async def update_project(self, project_id: str, **kwargs: object) -> None:
+        async with self._db.session() as session:
+            await session.execute(
+                update(ProjectRecord)
+                .where(ProjectRecord.id == project_id)
+                .values(**kwargs)
+            )
+            await session.commit()
+
+    async def list_projects(self) -> Sequence[ProjectRecord]:
+        async with self._db.session() as session:
+            result = await session.execute(
+                select(ProjectRecord).order_by(ProjectRecord.created_at)
+            )
+            return result.scalars().all()
 
     # ── Decisions ──────────────────────────────────────────────
 
