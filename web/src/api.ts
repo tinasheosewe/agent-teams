@@ -51,6 +51,11 @@ export async function getProject(projectId: string): Promise<Project> {
   return res.json()
 }
 
+export async function listProjects(): Promise<Project[]> {
+  const res = await fetch(`${API_BASE}/projects`)
+  return res.json()
+}
+
 export async function getDecisions(projectId: string): Promise<Decision[]> {
   const res = await fetch(`${API_BASE}/projects/${projectId}/decisions`)
   return res.json()

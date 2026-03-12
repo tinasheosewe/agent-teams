@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { createProject, runProject, getProject, getDecisions, getArtifacts } from './api'
+import { createProject, runProject, getProject, getDecisions, getArtifacts, listProjects } from './api'
 import type { Project, Decision, Artifact } from './api'
 import { useWebSocket } from './hooks/useWebSocket'
 import Dashboard from './components/Dashboard'
@@ -16,6 +16,17 @@ export default function App() {
   const [loading, setLoading] = useState(false)
 
   const { events, connected, send } = useWebSocket(project?.id ?? null)
+
+  // On mount, load the most recent active project (if any)
+  useEffect(() => {
+    listProjects().then((projects) => {
+      const active = projects.find((p) => p.status === 'running') ?? projects[projects.length - 1]
+      if (active) {
+        setProject(active)
+        setPrompt(active.prompt)
+      }
+    }).catch(() => {})
+  }, [])
 
   // Poll for project status + decisions + artifacts when running
   useEffect(() => {

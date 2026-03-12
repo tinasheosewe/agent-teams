@@ -89,6 +89,24 @@ async def create_project(req: CreateProjectRequest) -> ProjectResponse:
     )
 
 
+@app.get("/api/projects", response_model=list[ProjectResponse])
+async def list_projects() -> list[ProjectResponse]:
+    """List all projects."""
+    orch = get_orchestrator()
+    return [
+        ProjectResponse(
+            id=s.id,
+            prompt=s.prompt,
+            config_name=s.config_name,
+            status=s.status,
+            total_input_tokens=s.total_input_tokens,
+            total_output_tokens=s.total_output_tokens,
+            estimated_cost=s.estimated_cost,
+        )
+        for s in orch.list_projects()
+    ]
+
+
 @app.post("/api/projects/{project_id}/run", response_model=ProjectResponse)
 async def run_project(project_id: str) -> ProjectResponse:
     """Start running a project (non-blocking — streams events via WebSocket)."""

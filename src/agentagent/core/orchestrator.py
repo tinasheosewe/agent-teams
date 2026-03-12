@@ -249,6 +249,10 @@ class Orchestrator:
     def get_project_state(self, project_id: str) -> ProjectState | None:
         return self._projects.get(project_id)
 
+    def list_projects(self) -> list[ProjectState]:
+        """Return all project states."""
+        return list(self._projects.values())
+
     def get_escalations(self, project_id: str) -> list[dict[str, Any]]:
         return self._pending_escalations.get(project_id, [])
 
