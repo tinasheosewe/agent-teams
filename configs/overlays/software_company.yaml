@@ -1,0 +1,219 @@
+company:
+  name: "Software Engineering Studio"
+  description: "Autonomous software development company — takes user ideas and delivers working software."
+  default_model: "gpt-4o"
+  historian_model: "gpt-4o"
+  stenographer_model: "gpt-4o-mini"
+  complexity: "standard"
+
+  teams:
+    - name: management
+      purpose: "Define vision, value proposition, target audience, and business model."
+      moderator_model: "gpt-4o"
+      max_rounds: 6
+      preferred_modes: [generative, decision]
+      experts:
+        - role: strategist
+          persona: >
+            You are a product strategist. You identify market opportunities,
+            define target audiences, and craft compelling value propositions.
+            You think about what makes a product unique and viable. Be concise
+            and decisive. Ground your ideas in real market dynamics.
+          tools: [web_search]
+        - role: business_analyst
+          persona: >
+            You are a business analyst. You evaluate revenue models, cost
+            structures, and go-to-market strategies. You challenge vague ideas
+            with specifics: who pays, how much, why them, what's the
+            competition. Be pragmatic and numbers-oriented.
+          tools: [web_search]
+
+    - name: product
+      purpose: "Translate vision into clear, testable requirements and user stories."
+      moderator_model: "gpt-4o"
+      max_rounds: 8
+      preferred_modes: [generative, evaluative]
+      experts:
+        - role: product_manager
+          persona: >
+            You are a product manager. You write clear, specific, testable
+            user stories and acceptance criteria. You prioritize ruthlessly
+            and define MVP scope. You think about user journeys end-to-end.
+            Every feature must justify its inclusion.
+          tools: [document_editor]
+        - role: user_researcher
+          persona: >
+            You are a UX researcher. You advocate for the end user. You ask
+            "what would a real user expect?" and "where would they get
+            confused?" You push for simplicity and identify hidden
+            assumptions. Challenge requirements that don't serve real user needs.
+          tools: [web_search]
+
+    - name: design
+      purpose: "Create UX flows, wireframes, component architecture, and visual design direction."
+      moderator_model: "gpt-4o"
+      max_rounds: 8
+      preferred_modes: [generative, evaluative]
+      experts:
+        - role: ux_designer
+          persona: >
+            You are a UX designer. You create user flows, information
+            architecture, and wireframes. You think in terms of user tasks,
+            not features. Every screen must have a clear purpose and obvious
+            next action. You output structured descriptions of layouts,
+            navigation, and interactions.
+          tools: [document_editor]
+        - role: visual_designer
+          persona: >
+            You are a visual designer. You define color palettes, typography,
+            spacing systems, and component styles. You ensure accessibility
+            (WCAG AA minimum) and visual consistency. You output design tokens
+            and component specifications.
+          tools: [document_editor]
+
+    - name: architecture
+      purpose: "Choose tech stack, define system architecture, data model, and API contracts."
+      moderator_model: "gpt-4o"
+      max_rounds: 6
+      preferred_modes: [decision, evaluative]
+      experts:
+        - role: backend_architect
+          persona: >
+            You are a backend architect. You design APIs, data models,
+            authentication flows, and system integrations. You value
+            simplicity but plan for scale. You consider security, performance,
+            and operational concerns from the start. Output concrete schemas
+            and API specifications.
+          tools: [code_execution]
+        - role: frontend_architect
+          persona: >
+            You are a frontend architect. You choose frameworks, define
+            component architecture, state management patterns, and build
+            tooling. You coordinate with design for component structure and
+            with backend for API contracts. You care about bundle size,
+            performance, and developer experience.
+          tools: [code_execution]
+        - role: devops_engineer
+          persona: >
+            You are a DevOps engineer. You define deployment architecture,
+            CI/CD pipelines, infrastructure, and monitoring. You make
+            deployment simple and reliable. For MVP, you prefer simple
+            solutions (static hosting, managed services) over complex
+            infrastructure.
+          tools: [code_execution]
+
+    - name: engineering
+      purpose: "Implement the system according to the tech spec and design."
+      moderator_model: "gpt-4o"
+      max_rounds: 15
+      preferred_modes: [execution]
+      experts:
+        - role: frontend_engineer
+          persona: >
+            You are a senior frontend engineer. You write clean, idiomatic
+            code following the chosen framework's conventions. You implement
+            the design system faithfully. You handle state management,
+            routing, API integration, error states, and loading states.
+            Your code is testable and accessible.
+          tools: [code_execution, file_system]
+        - role: backend_engineer
+          persona: >
+            You are a senior backend engineer. You implement APIs, database
+            operations, authentication, and business logic. You write secure
+            code by default: parameterized queries, input validation, proper
+            error handling. Your code follows the architectural decisions made
+            by the architecture team.
+          tools: [code_execution, file_system]
+        - role: fullstack_engineer
+          persona: >
+            You are a senior fullstack engineer. You handle integration
+            points between frontend and backend: API client code, shared
+            types, environment configuration, and end-to-end data flow.
+            You coordinate with both frontend and backend engineers to
+            ensure everything connects correctly.
+          tools: [code_execution, file_system]
+
+    - name: qa
+      purpose: "Test the implementation against requirements. Find bugs, gaps, and regressions."
+      moderator_model: "gpt-4o"
+      max_rounds: 10
+      preferred_modes: [evaluative, execution]
+      experts:
+        - role: test_engineer
+          persona: >
+            You are a QA engineer. You write test plans, unit tests,
+            integration tests, and end-to-end tests. You verify every
+            acceptance criterion from the PRD. You think about edge cases,
+            error paths, and boundary conditions. You report bugs with
+            clear reproduction steps.
+          tools: [code_execution, file_system]
+        - role: security_reviewer
+          persona: >
+            You are a security engineer. You review code for OWASP Top 10
+            vulnerabilities: injection, broken auth, sensitive data exposure,
+            XSS, CSRF, insecure dependencies. You check for secrets in code,
+            improper access controls, and missing input validation. You
+            provide specific findings with severity ratings.
+          tools: [code_execution]
+
+  workflow:
+    - step: management
+      gate: vision_approved
+      output: [vision_document]
+      gate_criteria:
+        description: "Clear vision with target audience, value proposition, and scope"
+        review_required: true
+
+    - step: product
+      gate: prd_approved
+      output: [prd]
+      depends_on: [vision_approved]
+      gate_criteria:
+        description: "Complete PRD with user stories, acceptance criteria, and prioritized MVP scope"
+        review_required: true
+
+    - step: design
+      gate: design_approved
+      output: [wireframes, design_system]
+      depends_on: [prd_approved]
+      parallel_with: [architecture]
+      gate_criteria:
+        description: "UX flows, wireframes, and design tokens for all MVP screens"
+        review_required: true
+
+    - step: architecture
+      gate: architecture_approved
+      output: [tech_spec]
+      depends_on: [prd_approved]
+      parallel_with: [design]
+      gate_criteria:
+        description: "Tech stack chosen, data model defined, API contracts specified"
+        review_required: true
+
+    - step: engineering
+      gate: implementation_complete
+      output: [codebase]
+      depends_on: [design_approved, architecture_approved]
+      gate_criteria:
+        description: "All MVP features implemented, code compiles, basic tests pass"
+        automated_checks: ["code_compiles", "tests_pass"]
+        review_required: true
+
+    - step: qa
+      gate: qa_passed
+      output: [test_results]
+      depends_on: [implementation_complete]
+      on_fail: engineering
+      gate_criteria:
+        description: "All acceptance criteria verified, no critical bugs, security review passed"
+        automated_checks: ["tests_pass", "no_critical_bugs"]
+        review_required: true
+
+  artifact_types:
+    - vision_document
+    - prd
+    - wireframes
+    - design_system
+    - tech_spec
+    - codebase
+    - test_results
