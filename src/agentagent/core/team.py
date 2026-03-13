@@ -132,12 +132,6 @@ class Team:
         gate_criteria: dict[str, Any] | None = None,
         run_context: "RunContext | None" = None,
     ) -> TeamOutput:
-        self,
-        task: str,
-        output_artifact_types: list[str] | None = None,
-        gate_criteria: dict[str, Any] | None = None,
-        run_context: "RunContext | None" = None,
-    ) -> TeamOutput:
         """Execute a complete task through the team loop.
 
         Args:

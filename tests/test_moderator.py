@@ -7,6 +7,7 @@ import pytest
 
 from agentagent.config import InteractionMode, ThinkingDepth
 from agentagent.core.agent import Agent
+from agentagent.core.deliberation import DeliberationResult, TranscriptEntry
 from agentagent.core.events import EventBus
 from agentagent.core.moderator import LoopResult, Moderator
 from agentagent.core.modes import ModeResult
@@ -173,3 +174,149 @@ def test_moderator_defaults():
     assert mod._enable_deliberation is False
     assert mod._thinking_depth == ThinkingDepth.FULL
     assert mod._max_deliberation_cycles == 3
+
+
+# ── Mode clamping ─────────────────────────────────────────────
+
+
+def _make_delib_result(mode: str, verdict: str | None = None) -> DeliberationResult:
+    """Helper to create a minimal DeliberationResult."""
+    return DeliberationResult(
+        summary="synth",
+        mode_selection=mode if verdict is None else None,
+        transcript=[
+            TranscriptEntry(speaker="agent", role="agent", content="ok", phase="discuss"),
+        ],
+        total_input_tokens=10,
+        total_output_tokens=5,
+        verdict=verdict,
+        revision_guidance="fix it" if verdict == "revise" else None,
+    )
+
+
+def _make_mode_result(content: str = "output") -> ModeResult:
+    return ModeResult(
+        content=content,
+        decisions=[],
+        open_questions=[],
+        confidence=0.9,
+        attributed_contributions=[
+            {"agent": "eng", "content": content},
+        ],
+        total_input_tokens=20,
+        total_output_tokens=10,
+    )
+
+
+@pytest.mark.asyncio
+@patch("agentagent.core.moderator.deliberate")
+async def test_mode_clamped_to_preferred(mock_deliberate):
+    """When deliberation picks a mode outside preferred_modes, it falls back."""
+    # Think returns evaluative (not in preferred list)
+    think_result = _make_delib_result("evaluative")
+    # Reflect returns accept
+    reflect_result = _make_delib_result("generative", verdict="accept")
+
+    mock_deliberate.side_effect = [think_result, reflect_result]
+
+    mod = Moderator(
+        model="gpt-4o",
+        preferred_modes=[InteractionMode.GENERATIVE],
+        enable_deliberation=True,
+    )
+    agents = [_make_agent("eng")]
+    stenographer = MagicMock()
+    stenographer.record_round = AsyncMock()
+
+    mock_mode = MagicMock()
+    mock_mode.execute = AsyncMock(return_value=_make_mode_result())
+
+    with patch("agentagent.core.moderator.MODE_MAP", {"generative": mock_mode, "evaluative": MagicMock()}):
+        result = await mod.run_task_loop(
+            agents=agents,
+            task="Generate something",
+            context="",
+            historian=MagicMock(),
+            stenographer=stenographer,
+        )
+
+    # Should have been clamped to generative
+    mock_mode.execute.assert_called_once()
+    assert isinstance(result, LoopResult)
+    assert result.content == "output"
+
+
+@pytest.mark.asyncio
+@patch("agentagent.core.moderator.deliberate")
+async def test_consecutive_revision_cap(mock_deliberate):
+    """After max consecutive revisions, moderator force-accepts and breaks."""
+    think_result = _make_delib_result("generative")
+    revise_result = _make_delib_result("generative", verdict="revise")
+
+    # Think once, then reflect returns revise every time
+    mock_deliberate.side_effect = [
+        think_result,
+        revise_result,   # reflect round 1 → revise
+        revise_result,   # reflect round 2 → revise (hits cap=2, force-accept)
+    ]
+
+    mod = Moderator(
+        model="gpt-4o",
+        preferred_modes=[InteractionMode.GENERATIVE],
+        enable_deliberation=True,
+        max_rounds=5,
+    )
+    agents = [_make_agent("eng")]
+    stenographer = MagicMock()
+    stenographer.record_round = AsyncMock()
+
+    mock_mode = MagicMock()
+    mock_mode.execute = AsyncMock(return_value=_make_mode_result())
+
+    with patch("agentagent.core.moderator.MODE_MAP", {"generative": mock_mode}):
+        result = await mod.run_task_loop(
+            agents=agents,
+            task="Build it",
+            context="",
+            historian=MagicMock(),
+            stenographer=stenographer,
+        )
+
+    # Should have force-accepted after 2 revisions
+    assert result.rounds_used == 2
+    assert mock_mode.execute.call_count == 2
+    assert result.content == "output"
+
+
+@pytest.mark.asyncio
+@patch("agentagent.core.moderator.deliberate")
+async def test_deliberation_passes_allowed_modes(mock_deliberate):
+    """deliberate() is called with allowed_modes matching preferred_modes."""
+    think_result = _make_delib_result("generative")
+    reflect_result = _make_delib_result("generative", verdict="accept")
+    mock_deliberate.side_effect = [think_result, reflect_result]
+
+    mod = Moderator(
+        model="gpt-4o",
+        preferred_modes=[InteractionMode.GENERATIVE, InteractionMode.EXECUTION],
+        enable_deliberation=True,
+    )
+    agents = [_make_agent("eng")]
+    stenographer = MagicMock()
+    stenographer.record_round = AsyncMock()
+
+    mock_mode = MagicMock()
+    mock_mode.execute = AsyncMock(return_value=_make_mode_result())
+
+    with patch("agentagent.core.moderator.MODE_MAP", {"generative": mock_mode, "execution": MagicMock()}):
+        await mod.run_task_loop(
+            agents=agents,
+            task="Build",
+            context="",
+            historian=MagicMock(),
+            stenographer=stenographer,
+        )
+
+    # Both deliberate() calls should have allowed_modes=["generative", "execution"]
+    for call in mock_deliberate.call_args_list:
+        assert call.kwargs.get("allowed_modes") == ["generative", "execution"]

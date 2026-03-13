@@ -50,6 +50,20 @@ echo "🚀 Starting backend on :8000..."
 PYTHONPATH="${DIR}/src${PYTHONPATH:+:$PYTHONPATH}" python -m agentagent.cli serve --port 8000 &
 BACKEND_PID=$!
 
+# ── Wait for backend to be ready ──
+echo "⏳ Waiting for backend..."
+for i in $(seq 1 30); do
+  if curl -sf http://localhost:8000/api/configs >/dev/null 2>&1; then
+    echo "✅ Backend ready"
+    break
+  fi
+  if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
+    echo "❌ Backend process died"
+    exit 1
+  fi
+  sleep 1
+done
+
 # ── Start frontend ──
 echo "🚀 Starting frontend on :5173..."
 cd web

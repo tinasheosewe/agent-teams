@@ -11,6 +11,7 @@ company:
       purpose: "Define vision, value proposition, target audience, and business model."
       moderator_model: "gpt-4o-mini"
       max_rounds: 3
+      enable_deliberation: true
       preferred_modes: [generative, decision]
       experts:
         - role: strategist
@@ -40,6 +41,7 @@ company:
       purpose: "Translate vision into clear, testable requirements and user stories."
       moderator_model: "gpt-4o-mini"
       max_rounds: 3
+      enable_deliberation: true
       preferred_modes: [generative, evaluative]
       experts:
         - role: product_manager
@@ -66,6 +68,7 @@ company:
       purpose: "Create UX flows, wireframes, component architecture, and visual design direction."
       moderator_model: "gpt-4o-mini"
       max_rounds: 3
+      enable_deliberation: true
       preferred_modes: [generative, evaluative]
       experts:
         - role: ux_designer
@@ -90,6 +93,7 @@ company:
       purpose: "Choose tech stack, define system architecture, data model, and API contracts."
       moderator_model: "gpt-4o-mini"
       max_rounds: 3
+      enable_deliberation: true
       preferred_modes: [decision, evaluative]
       experts:
         - role: backend_architect
@@ -124,6 +128,7 @@ company:
       purpose: "Implement the system according to the tech spec and design."
       moderator_model: "gpt-4o-mini"
       max_rounds: 5
+      enable_deliberation: true
       preferred_modes: [execution]
       experts:
         - role: frontend_engineer
@@ -158,6 +163,7 @@ company:
       purpose: "Test the implementation against requirements. Find bugs, gaps, and regressions."
       moderator_model: "gpt-4o-mini"
       max_rounds: 3
+      enable_deliberation: true
       preferred_modes: [evaluative, execution]
       experts:
         - role: test_engineer

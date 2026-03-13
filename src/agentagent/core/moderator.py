@@ -172,16 +172,23 @@ class Moderator:
             event_bus=event_bus,
             project_id=project_id,
             run_context=run_context,
+            allowed_modes=self._preferred_modes,
         )
         full_transcript.extend(think_result.transcript)
         think_in += think_result.total_input_tokens
         think_out += think_result.total_output_tokens
 
-        # Select mode from deliberation synthesis
+        # Select mode from deliberation synthesis, clamped to preferred modes
         mode_name = think_result.mode_selection or self._preferred_modes[0]
+        if mode_name not in self._preferred_modes:
+            logger.warning(
+                "Deliberation selected %r but preferred modes are %s; falling back to %s",
+                mode_name, self._preferred_modes, self._preferred_modes[0],
+            )
+            mode_name = self._preferred_modes[0]
         mode = MODE_MAP.get(mode_name)
         if not mode:
-            logger.error("Unknown mode %r from deliberation, falling back to generative", mode_name)
+            logger.error("Unknown mode %r, falling back to generative", mode_name)
             mode = MODE_MAP["generative"]
             mode_name = "generative"
 
@@ -195,6 +202,8 @@ class Moderator:
         guidance = think_result.summary
         last_exec_result: ModeResult | None = None
         rounds_used = 0
+        consecutive_revisions = 0
+        max_consecutive_revisions = 2
 
         # ── 2. EXECUTE → REFLECT loop ─────────────────────────
         for round_num in range(1, self._max_rounds + 1):
@@ -245,6 +254,7 @@ class Moderator:
                 event_bus=event_bus,
                 project_id=project_id,
                 run_context=run_context,
+                allowed_modes=self._preferred_modes,
             )
             full_transcript.extend(reflect_result.transcript)
             reflect_in += reflect_result.total_input_tokens
@@ -263,6 +273,16 @@ class Moderator:
 
             if reflect_result.verdict == "accept":
                 logger.info("Team accepted output in round %d", round_num)
+                break
+
+            # Track consecutive revisions — break the loop if stuck
+            consecutive_revisions += 1
+            if consecutive_revisions >= max_consecutive_revisions:
+                logger.warning(
+                    "Hit %d consecutive revisions without acceptance — "
+                    "force-accepting current output to avoid infinite loop",
+                    consecutive_revisions,
+                )
                 break
 
             # Revisions: feed reflection guidance back to execution

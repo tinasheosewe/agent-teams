@@ -119,6 +119,11 @@ class ProgramManager:
     def state(self) -> WorkflowState:
         return self._state
 
+    @property
+    def workflow_state(self) -> WorkflowState:
+        """Alias for ``state`` used by the orchestrator."""
+        return self._state
+
     def _is_step_ready(self, step_name: str) -> bool:
         """Check if all dependencies for a step have been completed and approved."""
         step_state = self._state.steps.get(step_name)

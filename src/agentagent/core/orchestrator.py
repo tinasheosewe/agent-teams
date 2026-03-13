@@ -271,7 +271,19 @@ class Orchestrator:
             run_context=run_context,
         )
 
-        workflow_state = await pm.run_workflow(state.prompt, selected_steps=selected_steps)
+        try:
+            workflow_state = await pm.run_workflow(state.prompt, selected_steps=selected_steps)
+        except Exception:
+            # Preserve whatever tokens were accumulated before the crash
+            ws = pm.workflow_state
+            if ws:
+                state.workflow_state = ws
+                state.total_input_tokens = ws.total_input_tokens
+                state.total_output_tokens = ws.total_output_tokens
+                state.estimated_cost = self._estimate_cost(
+                    ws.total_input_tokens, ws.total_output_tokens
+                )
+            raise
 
         state.workflow_state = workflow_state
         state.total_input_tokens = workflow_state.total_input_tokens

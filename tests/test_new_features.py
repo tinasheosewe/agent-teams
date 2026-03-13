@@ -330,3 +330,22 @@ def test_message_classification_workflow():
 def test_new_event_types_exist():
     assert EventType.USER_INPUT_RECEIVED.value == "user_input_received"
     assert EventType.FILE_WRITTEN.value == "file_written"
+
+
+# ── ProgramManager.workflow_state alias ──────────────────────
+
+
+def test_program_manager_workflow_state_alias():
+    """ProgramManager.workflow_state is an alias for .state."""
+    from agentagent.core.forum import ProgramManager
+
+    # Construct with minimal mocks
+    mock_config = MagicMock()
+    mock_config.workflow = []
+    mock_config.default_model = "gpt-4o"
+    pm = ProgramManager(
+        config=mock_config,
+        teams={},
+        repository=MagicMock(),
+    )
+    assert pm.workflow_state is pm.state

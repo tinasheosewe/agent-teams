@@ -173,6 +173,40 @@ class ReflectionSynthesis(BaseModel):
     confidence: float = Field(default=0.8, ge=0.0, le=1.0)
 
 
+# ── Board Turn — Agent structured response ───────────────────
+
+
+class NewPointAction(BaseModel):
+    """A new point to raise on the board."""
+
+    claim: str
+
+
+class ReactionAction(BaseModel):
+    """A reaction to an existing point on the board."""
+
+    point_id: int
+    stance: Literal["agree", "disagree", "question"]
+    reasoning: str
+
+
+class AmendmentAction(BaseModel):
+    """An amendment to an existing point — bumps its version."""
+
+    point_id: int
+    new_claim: str
+    reason: str
+
+
+class BoardTurnResponse(BaseModel):
+    """Structured response from an agent during a board deliberation turn."""
+
+    new_points: list[NewPointAction] = Field(default_factory=list)
+    reactions: list[ReactionAction] = Field(default_factory=list)
+    amendments: list[AmendmentAction] = Field(default_factory=list)
+    done: bool = False
+
+
 # ── Forum Gate ───────────────────────────────────────────────
 
 
