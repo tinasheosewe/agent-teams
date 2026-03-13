@@ -1,273 +1,54 @@
-import { useState, useEffect, useCallback } from 'react'
-import { createProject, runProject, getProject, getDecisions, getArtifacts, listProjects, listConfigs, pauseProject, resumeProject, killProject } from './api'
-import type { Project, Decision, Artifact, ConfigInfo } from './api'
-import { useWebSocket } from './hooks/useWebSocket'
-import ProjectTabs from './components/ProjectTabs'
-import ProjectList from './components/ProjectList'
-import PipelineDAG from './components/PipelineDAG'
-import TimelineStream from './components/TimelineStream'
-import StepDetailPanel from './components/StepDetailPanel'
-import type { ContextTab } from './components/StepDetailPanel'
-import ToastRail from './components/ToastRail'
-import CommandPalette from './components/CommandPalette'
-import NewProjectModal from './components/NewProjectModal'
-import UserInput from './components/UserInput'
-
-type View = 'projects' | 'detail'
+import { useEffect } from "react";
+import { AnimatePresence } from "framer-motion";
+import { useUiStore } from "./stores/uiStore";
+import { useProjectStore } from "./stores/projectStore";
+import { useConfigStore } from "./stores/configStore";
+import { useEventStore } from "./stores/eventStore";
+import { Navbar } from "./components/layout/Navbar";
+import { DashboardView } from "./views/DashboardView";
+import { ProjectDetailView } from "./views/ProjectDetailView";
+import { CommandPalette } from "./components/overlays/CommandPalette";
+import { NewProjectModal } from "./components/overlays/NewProjectModal";
+import { ToastRail } from "./components/overlays/ToastRail";
 
 export default function App() {
-  const [view, setView] = useState<View>('projects')
-  const [project, setProject] = useState<Project | null>(null)
-  const [allProjects, setAllProjects] = useState<Project[]>([])
-  const [decisions, setDecisions] = useState<Decision[]>([])
-  const [artifacts, setArtifacts] = useState<Artifact[]>([])
-  const [configs, setConfigs] = useState<ConfigInfo[]>([])
-  const [selectedConfig, setSelectedConfig] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [selectedNode, setSelectedNode] = useState<string | null>(null)
-  const [contextTab, setContextTab] = useState<ContextTab>('decisions')
-  const [showPalette, setShowPalette] = useState(false)
-  const [showNewProject, setShowNewProject] = useState(false)
+  const { view, togglePalette } = useUiStore();
+  const { fetchProjects } = useProjectStore();
+  const { fetchConfigs } = useConfigStore();
+  const { disconnectAll } = useEventStore();
 
-  const { events, toasts, connected, send, clearEvents, dismissToast } = useWebSocket(project?.id ?? null)
-
-  // Load on mount
+  // Boot: fetch projects + configs
   useEffect(() => {
-    listConfigs().then(c => {
-      setConfigs(c)
-      if (c.length > 0) setSelectedConfig(c[0].path)
-    }).catch(() => {})
+    fetchProjects();
+    fetchConfigs();
+    return () => disconnectAll();
+  }, []);
 
-    listProjects().then(ps => {
-      setAllProjects(ps)
-      const active = ps.find(p => p.status === 'running') ?? ps[ps.length - 1]
-      if (active) {
-        setProject(active)
-        setView('detail')
-      }
-    }).catch(() => {})
-  }, [])
-
-  // Poll running project
-  useEffect(() => {
-    if (!project || project.status === 'completed' || project.status === 'failed') return
-    const interval = setInterval(async () => {
-      const updated = await getProject(project.id)
-      setProject(updated)
-      setAllProjects(prev => prev.map(p => p.id === updated.id ? updated : p))
-      const d = await getDecisions(project.id)
-      setDecisions(d)
-      const a = await getArtifacts(project.id)
-      setArtifacts(a)
-    }, 3000)
-    return () => clearInterval(interval)
-  }, [project])
-
-  // Cmd+K shortcut
+  // ⌘K shortcut
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault()
-        setShowPalette(v => !v)
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        togglePalette();
       }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [])
-
-  const handleSelectProject = useCallback(async (p: Project) => {
-    setProject(p)
-    setView('detail')
-    clearEvents()
-    setDecisions([])
-    setArtifacts([])
-    setSelectedNode(null)
-    try {
-      const d = await getDecisions(p.id)
-      setDecisions(d)
-      const a = await getArtifacts(p.id)
-      setArtifacts(a)
-    } catch { /* ignore */ }
-  }, [clearEvents])
-
-  const handleCreate = useCallback(async (prompt: string) => {
-    setLoading(true)
-    try {
-      const p = await createProject(prompt, selectedConfig || undefined)
-      setProject(p)
-      setAllProjects(prev => [...prev, p])
-      clearEvents()
-      setDecisions([])
-      setArtifacts([])
-      setView('detail')
-      setShowNewProject(false)
-      const running = await runProject(p.id)
-      setProject(running)
-      setAllProjects(prev => prev.map(pp => pp.id === running.id ? running : pp))
-    } finally {
-      setLoading(false)
-    }
-  }, [selectedConfig, clearEvents])
-
-  const handlePause = useCallback(async () => {
-    if (!project) return
-    await pauseProject(project.id)
-    const u = await getProject(project.id)
-    setProject(u)
-    setAllProjects(prev => prev.map(p => p.id === u.id ? u : p))
-  }, [project])
-
-  const handleResume = useCallback(async () => {
-    if (!project) return
-    await resumeProject(project.id)
-    const u = await getProject(project.id)
-    setProject(u)
-    setAllProjects(prev => prev.map(p => p.id === u.id ? u : p))
-  }, [project])
-
-  const handleKill = useCallback(async () => {
-    if (!project) return
-    await killProject(project.id)
-    const u = await getProject(project.id)
-    setProject(u)
-    setAllProjects(prev => prev.map(p => p.id === u.id ? u : p))
-  }, [project])
-
-  const handleSend = useCallback((action: string, message: string) => {
-    send(action, message)
-  }, [send])
-
-  const handleVeto = useCallback((message: string) => {
-    send('veto', message)
-  }, [send])
-
-  const handleToastNavigate = useCallback((stepName: string) => {
-    setSelectedNode(stepName)
-    setContextTab('decisions')
-  }, [])
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [togglePalette]);
 
   return (
-    <div className="app">
-      {/* ─── Navbar ─── */}
-      <nav className="navbar">
-        <div className="navbar-left">
-          <div className="navbar-brand" onClick={() => setView('projects')} style={{ cursor: 'pointer' }}>
-            <div className="navbar-logo">AA</div>
-            <span className="navbar-title">AgentAgent</span>
-          </div>
-          <div className="navbar-divider" />
-          <ProjectTabs projects={allProjects} activeId={project?.id ?? null} onSelect={handleSelectProject} />
-        </div>
-        <div className="navbar-right">
-          {project && view === 'detail' && (
-            <>
-              <span className={`status-badge ${project.status}`}>{project.status}</span>
-              {project.status === 'running' && (
-                <button className="btn btn-outline btn-sm" onClick={handlePause}>⏸</button>
-              )}
-              {project.status === 'paused' && (
-                <button className="btn btn-outline btn-sm" onClick={handleResume}>▶</button>
-              )}
-              {(project.status === 'running' || project.status === 'paused') && (
-                <button className="btn btn-danger-outline btn-sm" onClick={handleKill}>⏹</button>
-              )}
-              <div className="navbar-divider" />
-              <span className="navbar-stats">
-                {project.total_input_tokens.toLocaleString()} / {project.total_output_tokens.toLocaleString()} · ${project.estimated_cost.toFixed(4)}
-              </span>
-              <div className="navbar-divider" />
-            </>
-          )}
-          <select
-            className="config-select"
-            value={selectedConfig}
-            onChange={e => setSelectedConfig(e.target.value)}
-          >
-            {configs.map(c => <option key={c.path} value={c.path}>{c.name}</option>)}
-          </select>
-          <button className="btn btn-primary btn-sm" onClick={() => setShowNewProject(true)}>
-            + New
-          </button>
-          <button className="btn-icon cmd-k" onClick={() => setShowPalette(true)} title="⌘K">
-            ⌘K
-          </button>
-          <div className={`conn-dot ${connected ? 'on' : ''}`} title={connected ? 'Connected' : 'Disconnected'} />
-        </div>
-      </nav>
-
-      {/* ─── Content ─── */}
-      <main className="content">
-        {view === 'projects' ? (
-          <ProjectList projects={allProjects} onSelect={handleSelectProject} onNew={() => setShowNewProject(true)} />
-        ) : project ? (
-          <>
-            {/* DAG pipeline strip */}
-            <div className="dag-strip">
-              <PipelineDAG
-                events={events}
-                selectedNode={selectedNode}
-                onSelectNode={setSelectedNode}
-              />
-            </div>
-
-            {/* Split main: Timeline + Context Panel */}
-            <div className="split-main">
-              <div className="timeline-panel">
-                <TimelineStream
-                  events={events}
-                  selectedStep={selectedNode}
-                  onNavigateToDecision={() => {
-                    setContextTab('decisions')
-                  }}
-                />
-              </div>
-              <StepDetailPanel
-                selectedNode={selectedNode}
-                events={events}
-                decisions={decisions}
-                artifacts={artifacts}
-                onVeto={handleVeto}
-                contextTab={contextTab}
-                onChangeTab={setContextTab}
-              />
-            </div>
-
-            {/* Input bar */}
-            <div className="input-strip">
-              <UserInput onSend={handleSend} disabled={!project} />
-            </div>
-          </>
-        ) : null}
-      </main>
-
-      {/* ─── Toast Rail ─── */}
-      <ToastRail toasts={toasts} onDismiss={dismissToast} onNavigate={handleToastNavigate} />
-
-      {/* ─── Overlays ─── */}
-      {showPalette && (
-        <CommandPalette
-          projects={allProjects}
-          configs={configs}
-          activeProject={project}
-          onSelectProject={handleSelectProject}
-          onSelectConfig={setSelectedConfig}
-          onNewProject={() => { setShowPalette(false); setShowNewProject(true) }}
-          onPause={handlePause}
-          onResume={handleResume}
-          onKill={handleKill}
-          onClose={() => setShowPalette(false)}
-        />
-      )}
-      {showNewProject && (
-        <NewProjectModal
-          configs={configs}
-          selectedConfig={selectedConfig}
-          onChangeConfig={setSelectedConfig}
-          onCreate={handleCreate}
-          onClose={() => setShowNewProject(false)}
-          loading={loading}
-        />
-      )}
+    <div className="h-screen flex flex-col bg-[#fafafa] text-[#1d1d1f] antialiased">
+      <Navbar />
+      <AnimatePresence mode="wait">
+        {view === "dashboard" ? (
+          <DashboardView key="dashboard" />
+        ) : (
+          <ProjectDetailView key="detail" />
+        )}
+      </AnimatePresence>
+      <CommandPalette />
+      <NewProjectModal />
+      <ToastRail />
     </div>
-  )
+  );
 }

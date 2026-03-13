@@ -272,6 +272,141 @@ async def list_configs() -> list[dict]:
     return orch.list_configs()
 
 
+@app.get("/api/configs/{config_name}")
+async def get_config_detail(config_name: str) -> dict:
+    """Return full config detail for a named config."""
+    import yaml
+    from pathlib import Path as _Path
+
+    overlays_dir = _Path("configs/overlays")
+    for f in overlays_dir.glob("*.yaml"):
+        try:
+            with f.open() as fh:
+                raw = yaml.safe_load(fh)
+            name = raw.get("company", {}).get("name", f.stem)
+            if name == config_name:
+                return raw
+        except Exception:
+            continue
+    return {"error": "Config not found"}
+
+
+@app.get("/api/projects/{project_id}/summaries")
+async def get_summaries(
+    project_id: str, team: str | None = None, round: int | None = None
+) -> list[dict]:
+    """Get discussion summaries, optionally filtered by team/round."""
+    orch = get_orchestrator()
+    summaries = await orch._repo.get_summaries(project_id, team=team)
+    result = []
+    for s in summaries:
+        if round is not None and s.round_number != round:
+            continue
+        # key_points / conclusions / unresolved_items are stored as plain text
+        # Split by newline into lists for the frontend
+        def _split(text: str) -> list[str]:
+            return [line.strip() for line in text.split("\n") if line.strip()] if text else []
+
+        result.append(
+            {
+                "id": s.id,
+                "project_id": s.project_id,
+                "team": s.team,
+                "round_number": s.round_number,
+                "topic": s.topic,
+                "key_points": _split(s.key_points),
+                "conclusions": _split(s.conclusions),
+                "unresolved_items": _split(s.unresolved_items),
+                "created_at": s.created_at.isoformat() if s.created_at else "",
+            }
+        )
+    return result
+
+
+@app.get("/api/projects/{project_id}/transcripts/{team}/{round_number}")
+async def get_transcript(project_id: str, team: str, round_number: int) -> dict | None:
+    """Get the transcript for a specific team round."""
+    orch = get_orchestrator()
+    t = await orch._repo.get_transcript(project_id, team, round_number)
+    if not t:
+        return {"error": "Transcript not found"}
+    return {
+        "id": t.id,
+        "project_id": t.project_id,
+        "team": t.team,
+        "round_number": t.round_number,
+        "content": t.content,
+        "created_at": t.created_at.isoformat() if t.created_at else "",
+    }
+
+
+@app.get("/api/projects/{project_id}/teams")
+async def get_teams(project_id: str) -> list[dict]:
+    """Get team information for a project based on its config."""
+    orch = get_orchestrator()
+    state = orch.get_project_state(project_id)
+    if not state:
+        return []
+
+    import yaml
+    from pathlib import Path as _Path
+
+    config_path = _Path(state.config_path) if state.config_path else None
+    if not config_path or not config_path.exists():
+        return []
+
+    try:
+        with config_path.open() as fh:
+            raw = yaml.safe_load(fh)
+        teams_raw = raw.get("company", {}).get("teams", [])
+        return [
+            {
+                "name": t.get("name", ""),
+                "purpose": t.get("purpose", ""),
+                "experts": [e.get("name", "") for e in t.get("experts", [])],
+                "max_rounds": t.get("max_rounds", 3),
+            }
+            for t in teams_raw
+        ]
+    except Exception:
+        return []
+
+
+@app.get("/api/projects/{project_id}/questions")
+async def get_questions(project_id: str) -> list[dict]:
+    """Get open questions for a project."""
+    orch = get_orchestrator()
+    questions = await orch._repo.get_open_questions(project_id)
+    return [
+        {
+            "id": q.id,
+            "project_id": q.project_id,
+            "question": q.question,
+            "raised_by": q.raised_by,
+            "assigned_to": q.assigned_to,
+            "priority": q.priority.value if hasattr(q.priority, "value") else str(q.priority),
+            "status": q.status.value if hasattr(q.status, "value") else str(q.status),
+            "answer": q.answer,
+            "created_at": q.created_at.isoformat() if q.created_at else "",
+        }
+        for q in questions
+    ]
+
+
+@app.get("/api/projects/{project_id}/events")
+async def get_events(
+    project_id: str, type: str | None = None, limit: int | None = None
+) -> list[dict]:
+    """Get event history for a project from the in-memory event bus."""
+    orch = get_orchestrator()
+    history = orch.event_bus.get_project_history(project_id)
+    if type:
+        history = [e for e in history if e.get("type") == type]
+    if limit:
+        history = history[-limit:]
+    return history
+
+
 # ── WebSocket ────────────────────────────────────────────────
 
 class ConnectionManager:

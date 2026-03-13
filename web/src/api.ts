@@ -4,10 +4,13 @@ export interface Project {
   id: string
   prompt: string
   config_name: string
+  config_path: string
   status: string
+  mode: string
   total_input_tokens: number
   total_output_tokens: number
   estimated_cost: number
+  created_at?: string
 }
 
 export interface Decision {
@@ -109,6 +112,46 @@ export interface Escalation {
   created_at: string
 }
 
+export interface DiscussionSummary {
+  id: string
+  project_id: string
+  team: string
+  round_number: number
+  topic: string
+  key_points: string[]
+  conclusions: string[]
+  unresolved_items: string[]
+  created_at: string
+}
+
+export interface TranscriptRecord {
+  id: string
+  project_id: string
+  team: string
+  round_number: number
+  content: string
+  created_at: string
+}
+
+export interface TeamInfo {
+  name: string
+  purpose: string
+  experts: string[]
+  max_rounds: number
+}
+
+export interface OpenQuestion {
+  id: string
+  project_id: string
+  question: string
+  raised_by: string
+  assigned_to: string
+  priority: string
+  status: string
+  answer: string | null
+  created_at: string
+}
+
 export interface FileInfo {
   path: string
   size: number
@@ -119,10 +162,59 @@ export async function getEscalations(projectId: string): Promise<Escalation[]> {
   return res.json()
 }
 
-export async function getFiles(projectId: string): Promise<FileInfo[]> {
+export async function getSummaries(projectId: string, team?: string, round?: number): Promise<DiscussionSummary[]> {
+  const params = new URLSearchParams()
+  if (team) params.set('team', team)
+  if (round !== undefined) params.set('round', String(round))
+  const qs = params.toString()
+  const res = await fetch(`${API_BASE}/projects/${projectId}/summaries${qs ? '?' + qs : ''}`)
+  return res.json()
+}
+
+export async function getTranscript(projectId: string, team: string, round: number): Promise<TranscriptRecord | null> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/transcripts/${encodeURIComponent(team)}/${round}`)
+  if (res.status === 404) return null
+  return res.json()
+}
+
+export async function getTeams(projectId: string): Promise<TeamInfo[]> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/teams`)
+  return res.json()
+}
+
+export async function getQuestions(projectId: string): Promise<OpenQuestion[]> {
+  const res = await fetch(`${API_BASE}/projects/${projectId}/questions`)
+  return res.json()
+}
+
+export async function getConfigDetail(configName: string): Promise<Record<string, unknown>> {
+  const res = await fetch(`${API_BASE}/configs/${encodeURIComponent(configName)}`)
+  return res.json()
+}
+
+export async function setProjectMode(projectId: string, mode: string): Promise<void> {
+  await fetch(`${API_BASE}/projects/${projectId}/mode`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  })
+}
+
+export async function getProjectFiles(projectId: string): Promise<FileInfo[]> {
   const res = await fetch(`${API_BASE}/projects/${projectId}/files`)
   return res.json()
 }
+
+export async function getEvents(projectId: string, type?: string, limit?: number): Promise<Record<string, unknown>[]> {
+  const params = new URLSearchParams()
+  if (type) params.set('type', type)
+  if (limit) params.set('limit', String(limit))
+  const qs = params.toString()
+  const res = await fetch(`${API_BASE}/projects/${projectId}/events${qs ? '?' + qs : ''}`)
+  return res.json()
+}
+
+
 
 export async function setMode(projectId: string, mode: 'interactive' | 'autonomous'): Promise<{ status?: string; mode?: string }> {
   const res = await fetch(`${API_BASE}/projects/${projectId}/mode`, {
