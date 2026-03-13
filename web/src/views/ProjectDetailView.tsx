@@ -8,6 +8,8 @@ import {
   RotateCcw,
   PanelRightOpen,
   PanelRightClose,
+  List,
+  Pin,
 } from "lucide-react";
 import { useProjectStore } from "../stores/projectStore";
 import { useEventStore } from "../stores/eventStore";
@@ -17,6 +19,7 @@ import { StatusBadge } from "../components/ui/Badge";
 import { Badge } from "../components/ui/Badge";
 import { PipelineDAG } from "../components/detail/PipelineDAG";
 import { TimelineStream } from "../components/detail/TimelineStream";
+import { BoardPanel } from "../components/detail/BoardPanel";
 import { ContextPanel } from "../components/detail/ContextPanel";
 import { InputBar } from "../components/detail/InputBar";
 import * as api from "../api";
@@ -34,7 +37,7 @@ export function ProjectDetailView() {
     resumeProject,
     killProject,
   } = useProjectStore();
-  const { navigateTo, selectedStep, selectStep, contextPanelOpen, setContextPanelOpen, timelineGrouped, setTimelineGrouped } = useUiStore();
+  const { navigateTo, selectedStep, selectStep, contextPanelOpen, setContextPanelOpen, timelineGrouped, setTimelineGrouped, contentView, setContentView } = useUiStore();
   const { connectProject, disconnectProject, getEvents, sendMessage } = useEventStore();
 
   const project = activeProject();
@@ -194,6 +197,25 @@ export function ProjectDetailView() {
               <Square className="h-3.5 w-3.5 mr-1" /> Stop
             </Button>
           )}
+          {/* View toggle: Timeline / Board */}
+          <div className="flex items-center rounded-lg bg-[#f5f5f7] p-0.5">
+            <button
+              onClick={() => setContentView("timeline")}
+              className={`px-2 py-1 rounded-md text-[11px] font-medium transition-all ${
+                contentView === "timeline" ? "bg-white text-[#1d1d1f] shadow-sm" : "text-[#86868b]"
+              }`}
+            >
+              <List className="h-3 w-3 inline-block mr-1" />Timeline
+            </button>
+            <button
+              onClick={() => setContentView("board")}
+              className={`px-2 py-1 rounded-md text-[11px] font-medium transition-all ${
+                contentView === "board" ? "bg-white text-[#1d1d1f] shadow-sm" : "text-[#86868b]"
+              }`}
+            >
+              <Pin className="h-3 w-3 inline-block mr-1" />Board
+            </button>
+          </div>
           <button
             onClick={() => setContextPanelOpen(!contextPanelOpen)}
             className="p-1.5 rounded-lg text-[#86868b] hover:text-[#1d1d1f] hover:bg-[rgba(0,0,0,0.04)] transition-colors"
@@ -219,14 +241,18 @@ export function ProjectDetailView() {
 
       {/* Main content area */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Timeline */}
+        {/* Timeline / Board view */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          <TimelineStream
-            events={events}
-            selectedStep={selectedStep}
-            grouped={timelineGrouped}
-            onToggleGrouped={() => setTimelineGrouped(!timelineGrouped)}
-          />
+          {contentView === "board" ? (
+            <BoardPanel events={events} />
+          ) : (
+            <TimelineStream
+              events={events}
+              selectedStep={selectedStep}
+              grouped={timelineGrouped}
+              onToggleGrouped={() => setTimelineGrouped(!timelineGrouped)}
+            />
+          )}
         </div>
 
         {/* Context panel */}

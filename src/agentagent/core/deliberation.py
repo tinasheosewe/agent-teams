@@ -709,6 +709,19 @@ async def deliberate(
                     {"agent": r.agent, "stance": r.stance.value, "reasoning": r.reasoning}
                     for r in p.current.reactions.values()
                 ],
+                "versions": [
+                    {
+                        "version": v.version,
+                        "claim": v.claim,
+                        "amended_by": v.amended_by,
+                        "amendment_reason": v.amendment_reason,
+                        "reactions": [
+                            {"agent": r.agent, "stance": r.stance.value, "reasoning": r.reasoning}
+                            for r in v.reactions.values()
+                        ],
+                    }
+                    for v in p.versions
+                ],
             }
             for p in board.points
         ]

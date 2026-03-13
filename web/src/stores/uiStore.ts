@@ -2,6 +2,7 @@ import { create } from "zustand";
 
 type View = "dashboard" | "project";
 type ContextTab = "rounds" | "decisions" | "artifacts" | "gate" | "transcript";
+type ContentView = "timeline" | "board";
 
 interface UiState {
   view: View;
@@ -11,6 +12,7 @@ interface UiState {
   contextTab: ContextTab;
   contextPanelOpen: boolean;
   timelineGrouped: boolean;
+  contentView: ContentView;
 
   navigateTo: (view: View) => void;
   togglePalette: () => void;
@@ -19,6 +21,7 @@ interface UiState {
   setContextTab: (tab: ContextTab) => void;
   setContextPanelOpen: (open: boolean) => void;
   setTimelineGrouped: (grouped: boolean) => void;
+  setContentView: (view: ContentView) => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
@@ -29,6 +32,7 @@ export const useUiStore = create<UiState>((set) => ({
   contextTab: "decisions",
   contextPanelOpen: true,
   timelineGrouped: true,
+  contentView: "timeline",
 
   navigateTo: (view) => set({ view }),
   togglePalette: () => set((s) => ({ showCommandPalette: !s.showCommandPalette })),
@@ -37,4 +41,5 @@ export const useUiStore = create<UiState>((set) => ({
   setContextTab: (tab) => set({ contextTab: tab }),
   setContextPanelOpen: (open) => set({ contextPanelOpen: open }),
   setTimelineGrouped: (grouped) => set({ timelineGrouped: grouped }),
+  setContentView: (contentView) => set({ contentView }),
 }));

@@ -25,7 +25,7 @@ import { cn, hashColor } from "../../lib/utils";
 import type { WsEvent } from "../../stores/eventStore";
 import type { Decision, Artifact, DiscussionSummary } from "../../api";
 import * as api from "../../api";
-import { BoardPanel } from "./BoardPanel";
+
 
 interface Props {
   projectId: string;
@@ -186,9 +186,6 @@ function StepDetail({
           <TabsTrigger value="rounds">
             <Layers className="h-3 w-3 mr-1 inline-block" /> Rounds
           </TabsTrigger>
-          <TabsTrigger value="board">
-            <MessageSquare className="h-3 w-3 mr-1 inline-block" /> Board
-          </TabsTrigger>
           <TabsTrigger value="decisions">
             <MessageSquare className="h-3 w-3 mr-1 inline-block" /> Decisions
           </TabsTrigger>
@@ -202,11 +199,6 @@ function StepDetail({
             <ShieldCheck className="h-3 w-3 mr-1 inline-block" /> Gate
           </TabsTrigger>
         </TabsList>
-
-        {/* Board tab */}
-        <TabsContent value="board" className="flex-1 overflow-auto px-4 pb-4">
-          <BoardPanel events={events} />
-        </TabsContent>
 
         {/* Rounds tab */}
         <TabsContent value="rounds" className="flex-1 overflow-auto px-4 pb-4">
