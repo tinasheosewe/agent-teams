@@ -2,13 +2,14 @@
 
 These models validate JSON responses from LLM calls, ensuring type safety
 at the boundary between the LLM and application code. Used with
-``response_format=JSON_MODE`` to guarantee valid JSON from the model.
+``response_format`` (JSON mode or JSON schema mode) to guarantee valid,
+schema-conformant output from the model.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Literal, TypeVar
+from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -16,6 +17,20 @@ T = TypeVar("T", bound=BaseModel)
 
 # Constant passed to litellm.acompletion as ``response_format``
 JSON_MODE: dict[str, str] = {"type": "json_object"}
+
+
+def json_schema_format(name: str, schema: dict[str, Any]) -> dict[str, Any]:
+    """Build a ``response_format`` dict that enforces a JSON schema.
+
+    This uses OpenAI's *Structured Outputs* mode so the model can only
+    produce tokens that conform to the given schema.  All agent-referencing
+    fields should already be constrained to a ``Literal`` enum before the
+    schema is generated.
+    """
+    return {
+        "type": "json_schema",
+        "json_schema": {"name": name, "schema": schema},
+    }
 
 
 class ComplexityClassification(BaseModel):
@@ -129,19 +144,33 @@ class OptionsResponse(BaseModel):
     reasoning: str
 
 
-# ── Moderator ────────────────────────────────────────────────
+# ── Discussion — Schemas ─────────────────────────────────────
 
 
-class ChallengeResponse(BaseModel):
-    agree: bool = True
-    suggested_mode: str = ""
-    reason: str = ""
+class SpiralCheck(BaseModel):
+    """Moderator health check for discussion progress."""
+
+    is_circular: bool
+    reason: str
+    redirect_topic: str | None = None
 
 
-class CompletenessResponse(BaseModel):
-    complete: bool
-    reasoning: str
-    missing: list[str] = Field(default_factory=list)
+class DiscussionSynthesis(BaseModel):
+    """Pre-execution synthesis: what the team agreed on."""
+
+    summary: str
+    mode_selection: Literal["generative", "evaluative", "execution", "decision"]
+    mode_reasoning: str
+    open_items: list[str] = Field(default_factory=list)
+
+
+class ReflectionSynthesis(BaseModel):
+    """Post-execution synthesis: accept or revise."""
+
+    summary: str
+    verdict: Literal["accept", "revise"]
+    revision_guidance: str = ""
+    confidence: float = Field(default=0.8, ge=0.0, le=1.0)
 
 
 # ── Forum Gate ───────────────────────────────────────────────

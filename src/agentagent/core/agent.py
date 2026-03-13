@@ -88,6 +88,7 @@ class Agent:
         messages: list[Message],
         response_format: dict[str, Any] | None = None,
         run_context: "RunContext | None" = None,
+        temperature: float | None = None,
     ) -> AgentResponse:
         """Execute a single agent turn, handling tool calls.
 
@@ -96,6 +97,7 @@ class Agent:
             response_format: Optional litellm response_format (e.g. {"type": "json_object"}).
                 When set, tool calling is disabled to avoid provider conflicts.
             run_context: Optional shared context for pause/cancel/event support.
+            temperature: Optional sampling temperature override for this call.
 
         Returns:
             AgentResponse with the assistant's text reply and metadata.
@@ -121,6 +123,8 @@ class Agent:
                 kwargs["tools"] = tools
             if response_format:
                 kwargs["response_format"] = response_format
+            if temperature is not None:
+                kwargs["temperature"] = temperature
 
             response = await litellm.acompletion(**kwargs)
             choice = response.choices[0]  # type: ignore[union-attr]

@@ -166,3 +166,121 @@ async def test_generative_mode_with_event_bus(mock_litellm):
     await mode.execute(agents, "task", "context", event_bus=event_bus, project_id="p1")
 
     assert len(events_received) > 0
+
+
+# ── attributed_contributions tests ────────────────────────────
+
+
+@pytest.mark.asyncio
+@patch("agentagent.core.agent.litellm")
+async def test_generative_mode_attribution(mock_litellm):
+    """GenerativeMode populates attributed_contributions from proposals."""
+    proposal1 = _make_completion_response("React approach")
+    proposal2 = _make_completion_response("Vue approach")
+    scores = json.dumps({
+        "scores": [
+            {"agent": "designer", "score": 8, "reasoning": "good"},
+            {"agent": "engineer", "score": 7, "reasoning": "ok"},
+        ]
+    })
+    score_resp = _make_completion_response(scores)
+    synthesis = _make_completion_response("Final synthesis")
+
+    mock_litellm.acompletion = AsyncMock(
+        side_effect=[proposal1, proposal2, score_resp, score_resp, synthesis]
+    )
+
+    mode = GenerativeMode()
+    agents = [_make_agent("designer"), _make_agent("engineer")]
+    result = await mode.execute(agents, "Choose frontend", "Building web app")
+
+    assert len(result.attributed_contributions) == 2
+    agents_in_contribs = {c["agent"] for c in result.attributed_contributions}
+    assert agents_in_contribs == {"designer", "engineer"}
+    assert all(c["phase"] == "proposal" for c in result.attributed_contributions)
+
+
+@pytest.mark.asyncio
+@patch("agentagent.core.agent.litellm")
+async def test_evaluative_mode_attribution(mock_litellm):
+    """EvaluativeMode carries agent name through issue pooling."""
+    review = json.dumps({
+        "issues": [
+            {"issue": "Missing error handling", "severity": "major", "suggestion": "Add try/catch"},
+            {"issue": "No tests", "severity": "critical", "suggestion": "Add tests"},
+        ],
+        "strengths": ["Clean code"],
+        "overall_assessment": "needs_changes",
+    })
+    mock_litellm.acompletion = AsyncMock(
+        return_value=_make_completion_response(review)
+    )
+
+    mode = EvaluativeMode()
+    agents = [_make_agent("reviewer")]
+    result = await mode.execute(agents, "Review this code", "def hello(): pass")
+
+    assert len(result.attributed_contributions) == 2
+    for contrib in result.attributed_contributions:
+        assert contrib["agent"] == "reviewer"
+        assert contrib["phase"] == "review"
+        assert "severity" in contrib
+
+
+@pytest.mark.asyncio
+@patch("agentagent.core.agent.litellm")
+async def test_execution_mode_attribution(mock_litellm):
+    """ExecutionMode populates attributed_contributions from subtask results."""
+    decomposition = json.dumps({
+        "subtasks": [
+            {"assignee": "engineer", "task": "Build the API", "dependencies": []},
+        ]
+    })
+    subtask_result = _make_completion_response("API built successfully")
+    integration = _make_completion_response("All integrated")
+
+    mock_litellm.acompletion = AsyncMock(
+        side_effect=[
+            _make_completion_response(decomposition),
+            subtask_result,
+            integration,
+        ]
+    )
+
+    mode = ExecutionMode()
+    agents = [_make_agent("engineer")]
+    result = await mode.execute(agents, "Build the system", "Context here")
+
+    assert len(result.attributed_contributions) == 1
+    assert result.attributed_contributions[0]["agent"] == "engineer"
+    assert result.attributed_contributions[0]["phase"] == "execution"
+
+
+@pytest.mark.asyncio
+@patch("agentagent.core.agent.litellm")
+async def test_decision_mode_attribution(mock_litellm):
+    """DecisionMode populates attributed_contributions from recommendations."""
+    options = json.dumps({
+        "options": [
+            {"name": "PostgreSQL", "pros": ["mature"], "cons": ["complex"], "risks": []},
+        ],
+        "recommendation": "PostgreSQL",
+        "reasoning": "Better for production",
+    })
+    mock_litellm.acompletion = AsyncMock(
+        return_value=_make_completion_response(options)
+    )
+
+    mode = DecisionMode()
+    agents = [_make_agent("architect")]
+    result = await mode.execute(agents, "Choose a database", "Building a web app")
+
+    assert len(result.attributed_contributions) == 1
+    assert result.attributed_contributions[0]["agent"] == "architect"
+    assert result.attributed_contributions[0]["phase"] == "recommendation"
+
+
+def test_mode_result_has_attributed_contributions_field():
+    """ModeResult includes attributed_contributions with default empty list."""
+    result = ModeResult(content="test")
+    assert result.attributed_contributions == []

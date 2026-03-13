@@ -15,7 +15,6 @@ from agentagent.core.agent import Agent, Message
 from agentagent.core.events import Event, EventBus, EventType
 from agentagent.core.historian import Historian
 from agentagent.core.moderator import Moderator
-from agentagent.core.modes import ModeResult
 from agentagent.core.stenographer import Stenographer
 from agentagent.store.models import Artifact, ArtifactStatus
 from agentagent.store.repository import Repository
@@ -44,10 +43,10 @@ class TeamOutput:
 class Team:
     """A team of AI experts that collaborates on tasks.
 
-    The team follows this loop:
-    1. INTAKE: Task arrives → Historian briefs → Moderator selects mode
-    2. WORK: Mode-dependent protocol (may be multiple rounds)
-    3. COMPRESS: Stenographer records and summarizes
+    The team delegates the full work loop to the Moderator:
+    1. INTAKE: Task arrives → Historian briefs the team
+    2. WORK: Moderator runs deliberate → execute → deliberate loop
+    3. COMPRESS: Stenographer records via moderator recess
     4. OUTPUT: Package deliverable + decisions + open questions
     """
 
@@ -68,14 +67,30 @@ class Team:
         self._event_bus = event_bus
         self._repo = repository
 
+        # Create historian first — needed for AskHistorianTool
+        self._historian = Historian(
+            model=historian_model,
+            repository=repository,
+            project_id=project_id,
+        )
+
+        # Register AskHistorianTool if not already present
+        from agentagent.tools.builtin import AskHistorianTool
+        if not tool_registry.get("ask_historian"):
+            tool_registry.register(AskHistorianTool(self._historian))
+
         # Create domain expert agents
         self._experts: list[Agent] = []
         for expert_cfg in config.experts:
+            # Ensure every expert has access to ask_historian
+            tools = list(expert_cfg.tools)
+            if "ask_historian" not in tools:
+                tools.append("ask_historian")
             agent = Agent(
                 role=expert_cfg.role,
                 persona=expert_cfg.persona,
                 model=expert_cfg.model,
-                tool_names=expert_cfg.tools,
+                tool_names=tools,
                 tool_registry=tool_registry,
             )
             self._experts.append(agent)
@@ -85,11 +100,9 @@ class Team:
             model=config.moderator_model,
             preferred_modes=config.preferred_modes,
             max_rounds=config.max_rounds,
-        )
-        self._historian = Historian(
-            model=historian_model,
-            repository=repository,
-            project_id=project_id,
+            enable_deliberation=config.enable_deliberation,
+            thinking_depth=config.thinking_depth,
+            max_deliberation_cycles=config.max_deliberation_cycles,
         )
         self._stenographer = Stenographer(
             model=stenographer_model,
@@ -97,7 +110,28 @@ class Team:
             project_id=project_id,
         )
 
+    @property
+    def experts(self) -> list[Agent]:
+        """Expose domain expert agents for conversation access."""
+        return self._experts
+
+    @property
+    def historian(self) -> Historian:
+        """Expose historian for conversation context."""
+        return self._historian
+
+    @property
+    def moderator_agent(self) -> Moderator:
+        """Expose moderator for synthesis in conversations."""
+        return self._moderator
+
     async def execute_task(
+        self,
+        task: str,
+        output_artifact_types: list[str] | None = None,
+        gate_criteria: dict[str, Any] | None = None,
+        run_context: "RunContext | None" = None,
+    ) -> TeamOutput:
         self,
         task: str,
         output_artifact_types: list[str] | None = None,
@@ -115,19 +149,13 @@ class Team:
         Returns:
             TeamOutput with the deliverable and metadata.
         """
-        total_in = 0
-        total_out = 0
-        rounds_used = 0
-
         # ── Phase 1: INTAKE ──
-        # Historian briefs the team
         try:
             briefing = await self._historian.brief(self.name, task)
         except Exception:
             logger.warning("Historian briefing failed for team %s, proceeding without context", self.name)
             briefing = "No prior context available (historian unavailable)."
 
-        # Check for circular discussions
         try:
             circular_check = await self._historian.check_circular(task)
         except Exception:
@@ -142,83 +170,19 @@ class Team:
             f"## Historian Briefing:\n{briefing}"
         )
 
-        # ── Phase 2: WORK ──
-        last_result: ModeResult | None = None
-        for round_num in range(1, self._config.max_rounds + 1):
-            rounds_used = round_num
-
-            # Interrupt check between rounds
-            if run_context:
-                await run_context.check_pause()
-
-            if self._event_bus:
-                await self._event_bus.emit(Event(
-                    type=EventType.TEAM_ROUND_START,
-                    data={"team": self.name, "round": round_num},
-                    project_id=self._project_id,
-                ))
-
-            # Run a round through the moderator
-            result = await self._moderator.run_round(
-                agents=self._experts,
-                task=task if last_result is None else f"{task}\n\nPrevious round result:\n{last_result.content[:2000]}",
-                context=context,
-                event_bus=self._event_bus,
-                project_id=self._project_id,
-                run_context=run_context,
-            )
-            total_in += result.total_input_tokens
-            total_out += result.total_output_tokens
-            last_result = result
-
-            # ── Phase 3: COMPRESS ──
-            # Build transcript from result, including a tool-usage summary
-            transcript_text = f"Round {round_num} ({self.name}):\n{result.content}"
-            if result.tool_calls_made:
-                tool_lines = [f"  - {tc['name']}({', '.join(f'{k}={v!r}' for k, v in tc.get('args', {}).items())})" for tc in result.tool_calls_made]
-                transcript_text += "\n\nTools used:\n" + "\n".join(tool_lines)
-            try:
-                await self._stenographer.record_round(
-                    team=self.name,
-                    round_number=round_num,
-                    transcript_text=transcript_text,
-                    topic=task[:200],
-                )
-            except Exception:
-                logger.error(
-                    "Stenographer failed to record round %d for team %s — decisions/questions may be lost",
-                    round_num, self.name,
-                )
-
-            if self._event_bus:
-                await self._event_bus.emit(Event(
-                    type=EventType.TEAM_ROUND_END,
-                    data={
-                        "team": self.name,
-                        "round": round_num,
-                        "confidence": result.confidence,
-                    },
-                    project_id=self._project_id,
-                ))
-
-            # Check completeness
-            is_complete, reasoning = await self._moderator.evaluate_completeness(
-                task, result, gate_criteria
-            )
-            if is_complete:
-                logger.info(
-                    "Team %s completed in round %d: %s", self.name, round_num, reasoning
-                )
-                break
-
-            # Update context with compressed summary for next round
-            context += f"\n\n## Round {round_num} Summary:\n{result.content[:1000]}"
+        # ── Phase 2+3: WORK + COMPRESS (delegated to moderator) ──
+        loop_result = await self._moderator.run_task_loop(
+            agents=self._experts,
+            task=task,
+            context=context,
+            historian=self._historian,
+            stenographer=self._stenographer,
+            event_bus=self._event_bus,
+            project_id=self._project_id,
+            run_context=run_context,
+        )
 
         # ── Phase 4: OUTPUT ──
-        if not last_result:
-            return TeamOutput(content="No result produced.", rounds_used=rounds_used)
-
-        # Save artifact if configured
         artifact = None
         if output_artifact_types:
             for art_type in output_artifact_types:
@@ -227,7 +191,7 @@ class Team:
                         project_id=self._project_id,
                         artifact_type=art_type,
                         name=f"{self.name}_{art_type}",
-                        content=last_result.content,
+                        content=loop_result.content,
                         team=self.name,
                         status=ArtifactStatus.DRAFT,
                     )
@@ -244,12 +208,12 @@ class Team:
                     ))
 
         return TeamOutput(
-            content=last_result.content,
+            content=loop_result.content,
             artifact=artifact,
-            decisions=last_result.decisions,
-            open_questions=last_result.open_questions,
-            confidence=last_result.confidence,
-            total_input_tokens=total_in,
-            total_output_tokens=total_out,
-            rounds_used=rounds_used,
+            decisions=loop_result.decisions,
+            open_questions=loop_result.open_questions,
+            confidence=loop_result.confidence,
+            total_input_tokens=loop_result.total_input_tokens,
+            total_output_tokens=loop_result.total_output_tokens,
+            rounds_used=loop_result.rounds_used,
         )

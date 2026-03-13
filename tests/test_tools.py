@@ -1,11 +1,13 @@
 """Tests for the tool plugin system."""
 
 import json
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from agentagent.tools.base import BaseTool, ToolRegistry
 from agentagent.tools.builtin import (
+    AskHistorianTool,
     CodeExecutionTool,
     DocumentEditorTool,
     FileSystemTool,
@@ -182,3 +184,45 @@ def test_create_default_registry(tmp_path):
     assert "file_system" in tools
     assert "web_search" in tools
     assert "document_editor" in tools
+
+
+def test_create_default_registry_with_historian(tmp_path):
+    """Registry includes ask_historian when historian is provided."""
+    historian = MagicMock()
+    reg = create_default_registry(work_dir=str(tmp_path), historian=historian)
+    assert "ask_historian" in reg.list_tools()
+
+
+def test_create_default_registry_without_historian(tmp_path):
+    """Registry does not include ask_historian when historian is None."""
+    reg = create_default_registry(work_dir=str(tmp_path))
+    assert "ask_historian" not in reg.list_tools()
+
+
+# ── AskHistorianTool tests ───────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_ask_historian_tool():
+    """AskHistorianTool delegates to historian.query() and returns content."""
+    mock_response = MagicMock()
+    mock_response.content = "The team decided to use PostgreSQL because..."
+    historian = MagicMock()
+    historian.query = AsyncMock(return_value=mock_response)
+
+    tool = AskHistorianTool(historian)
+    result = json.loads(await tool.execute(question="Why did we choose PostgreSQL?"))
+
+    assert result["answer"] == "The team decided to use PostgreSQL because..."
+    historian.query.assert_called_once_with("Why did we choose PostgreSQL?")
+
+
+def test_ask_historian_tool_spec():
+    """AskHistorianTool has a valid function spec."""
+    historian = MagicMock()
+    tool = AskHistorianTool(historian)
+    spec = tool.to_function_spec()
+
+    assert spec["type"] == "function"
+    assert spec["function"]["name"] == "ask_historian"
+    assert "question" in spec["function"]["parameters"]["properties"]

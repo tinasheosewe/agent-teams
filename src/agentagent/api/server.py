@@ -61,7 +61,8 @@ class CreateProjectRequest(BaseModel):
 
 class UserMessageRequest(BaseModel):
     message: str
-    action: str = "message"  # message | veto | skip | constrain
+    action: str = "message"  # message | veto | skip | constrain | converse | end_conversation
+    target: str | None = None  # For converse: "pm" | "team:{name}" | "agent:{team}:{role}"
 
 
 class ProjectResponse(BaseModel):
@@ -110,8 +111,12 @@ async def list_projects() -> list[ProjectResponse]:
     ]
 
 
+class RunProjectRequest(BaseModel):
+    selected_steps: list[str] | None = None
+
+
 @app.post("/api/projects/{project_id}/run", response_model=ProjectResponse)
-async def run_project(project_id: str) -> ProjectResponse:
+async def run_project(project_id: str, req: RunProjectRequest | None = None) -> ProjectResponse:
     """Start running a project (non-blocking — streams events via WebSocket)."""
     orch = get_orchestrator()
     state = orch.get_project_state(project_id)
@@ -120,8 +125,9 @@ async def run_project(project_id: str) -> ProjectResponse:
             id=project_id, prompt="", config_name="", status="not_found"
         )
 
+    steps = set(req.selected_steps) if req and req.selected_steps else None
     # Run in background so the REST call returns immediately
-    task = asyncio.create_task(_run_project_background(orch, project_id))
+    task = asyncio.create_task(_run_project_background(orch, project_id, steps))
     orch.register_task(project_id, task)
 
     return ProjectResponse(
@@ -133,9 +139,9 @@ async def run_project(project_id: str) -> ProjectResponse:
     )
 
 
-async def _run_project_background(orch: Orchestrator, project_id: str) -> None:
+async def _run_project_background(orch: Orchestrator, project_id: str, selected_steps: set[str] | None = None) -> None:
     try:
-        await orch.run_project(project_id)
+        await orch.run_project(project_id, selected_steps=selected_steps)
     except Exception:
         logger.exception("Background project run failed: %s", project_id)
 
@@ -210,9 +216,20 @@ async def get_escalations(project_id: str) -> list[dict]:
 
 @app.post("/api/projects/{project_id}/message")
 async def send_message(project_id: str, req: UserMessageRequest) -> dict:
-    """Send a user message (participate, veto, skip, constrain)."""
+    """Send a user message (participate, veto, skip, constrain, converse)."""
     orch = get_orchestrator()
-    return await orch.send_user_message(project_id, req.message, req.action)
+    return await orch.send_user_message(
+        project_id, req.message, req.action, target=req.target,
+    )
+
+
+@app.post("/api/projects/{project_id}/converse")
+async def converse(project_id: str, req: UserMessageRequest) -> dict:
+    """Start or continue a targeted conversation during a run."""
+    orch = get_orchestrator()
+    return await orch.send_user_message(
+        project_id, req.message, "converse", target=req.target,
+    )
 
 
 @app.post("/api/projects/{project_id}/pause")
@@ -468,7 +485,10 @@ async def project_websocket(websocket: WebSocket, project_id: str) -> None:
                 msg = json.loads(data)
                 action = msg.get("action", "message")
                 message = msg.get("message", "")
-                await orch.send_user_message(project_id, message, action)
+                target = msg.get("target")
+                await orch.send_user_message(
+                    project_id, message, action, target=target,
+                )
             except json.JSONDecodeError:
                 await orch.send_user_message(project_id, data, "message")
     except WebSocketDisconnect:

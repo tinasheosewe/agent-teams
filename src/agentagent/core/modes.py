@@ -44,6 +44,7 @@ class ModeResult:
     decisions: list[dict[str, Any]] = field(default_factory=list)
     artifacts: list[dict[str, Any]] = field(default_factory=list)
     open_questions: list[dict[str, Any]] = field(default_factory=list)
+    attributed_contributions: list[dict[str, Any]] = field(default_factory=list)
     confidence: float = 0.8
     total_input_tokens: int = 0
     total_output_tokens: int = 0
@@ -209,6 +210,10 @@ class GenerativeMode(InteractionModeBase):
 
         return ModeResult(
             content=final_resp.content,
+            attributed_contributions=[
+                {"agent": agent.role, "content": content, "phase": "proposal"}
+                for agent, content in proposals
+            ],
             confidence=min(max(avg_scores.values()) / 10, 1.0) if avg_scores else 0.7,
             total_input_tokens=total_in,
             total_output_tokens=total_out,
@@ -281,11 +286,13 @@ class EvaluativeMode(InteractionModeBase):
                 ))
             try:
                 data = parse_llm_json(resp.content, ReviewResponse)
-                all_issues.extend(i.model_dump() for i in data.issues)
+                all_issues.extend(
+                    {**i.model_dump(), "agent": agent.role} for i in data.issues
+                )
                 all_strengths.extend(data.strengths)
                 assessments.append(data.overall_assessment)
             except (ValidationError, ValueError):
-                all_issues.append({"issue": resp.content, "severity": "major", "suggestion": ""})
+                all_issues.append({"issue": resp.content, "severity": "major", "suggestion": "", "agent": agent.role})
                 assessments.append("needs_changes")
 
         # Phase 2: Deduplicate and prioritize issues
@@ -306,6 +313,10 @@ class EvaluativeMode(InteractionModeBase):
 
         return ModeResult(
             content=result_content,
+            attributed_contributions=[
+                {"agent": issue["agent"], "content": issue.get("issue", ""), "phase": "review", "severity": issue.get("severity", "major")}
+                for issue in all_issues
+            ],
             confidence=0.9 if overall == "pass" else (0.5 if overall == "fail" else 0.7),
             total_input_tokens=total_in,
             total_output_tokens=total_out,
@@ -490,6 +501,10 @@ class ExecutionMode(InteractionModeBase):
         return ModeResult(
             content=integrate_resp.content,
             artifacts=[{"type": "implementation", "content": r} for r in results.values()],
+            attributed_contributions=[
+                {"agent": st.get("assignee", "unknown"), "content": results.get(st.get("task", ""), ""), "phase": "execution", "subtask": st.get("task", "")}
+                for st in subtasks if st.get("task", "") in results
+            ],
             confidence=0.75,
             total_input_tokens=total_in,
             total_output_tokens=total_out,
@@ -606,6 +621,10 @@ class DecisionMode(InteractionModeBase):
         return ModeResult(
             content=json.dumps(decision_data, indent=2),
             decisions=[decision_data],
+            attributed_contributions=[
+                {"agent": agent_role, "content": reasoning, "phase": "recommendation", "recommendation": rec}
+                for agent_role, rec, reasoning in recommendations
+            ],
             confidence=decision_data["confidence"],
             total_input_tokens=total_in,
             total_output_tokens=total_out,

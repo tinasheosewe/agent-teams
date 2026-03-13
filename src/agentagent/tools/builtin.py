@@ -13,6 +13,7 @@ from agentagent.tools.base import BaseTool
 
 if TYPE_CHECKING:
     from agentagent.core.events import RunContext
+    from agentagent.core.historian import Historian
     from agentagent.tools.base import ToolRegistry
 
 
@@ -340,6 +341,7 @@ class DocumentEditorTool(BaseTool):
 def create_default_registry(
     work_dir: str | None = None,
     run_context: "RunContext | None" = None,
+    historian: "Historian | None" = None,
 ) -> "ToolRegistry":
     """Create a ToolRegistry populated with all built-in tools.
 
@@ -355,6 +357,9 @@ def create_default_registry(
     registry.register(WebSearchTool())
     registry.register(DocumentEditorTool(work_dir=work_dir))
 
+    if historian:
+        registry.register(AskHistorianTool(historian))
+
     if run_context:
         registry.register(SignalLeaderTool(run_context))
         if run_context.mode == "interactive":
@@ -364,6 +369,46 @@ def create_default_registry(
 
 
 # ── Coordination tools ───────────────────────────────────────
+
+
+class AskHistorianTool(BaseTool):
+    """Let any agent query the project historian for prior decisions, context, and rationale."""
+
+    def __init__(self, historian: "Historian") -> None:
+        from agentagent.core.historian import Historian  # noqa: F811
+
+        self._historian = historian
+
+    @property
+    def name(self) -> str:
+        return "ask_historian"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Ask the project historian a question about prior decisions, discussion "
+            "summaries, open questions, or related context. Use this when you need "
+            "to understand why a decision was made, what was discussed previously, "
+            "or whether a topic has already been addressed."
+        )
+
+    @property
+    def parameters_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The question to ask the historian.",
+                },
+            },
+            "required": ["question"],
+        }
+
+    async def execute(self, **kwargs: Any) -> str:
+        question = kwargs["question"]
+        response = await self._historian.query(question)
+        return json.dumps({"answer": response.content})
 
 
 class SignalLeaderTool(BaseTool):

@@ -163,6 +163,18 @@ class Repository:
             session.add(transcript)
             await session.commit()
             await session.refresh(transcript)
+        # Vector-index transcript content for semantic search
+        content_preview = transcript.content[:500] if transcript.content else ""
+        self._vector.add(
+            doc_id=f"transcript:{transcript.id}",
+            text=f"[{transcript.team} R{transcript.round_number}] {content_preview}",
+            metadata={
+                "project_id": transcript.project_id,
+                "type": "transcript",
+                "team": transcript.team,
+                "round_number": transcript.round_number,
+            },
+        )
         return transcript
 
     async def get_transcript(
@@ -234,6 +246,16 @@ class Repository:
             session.add(question)
             await session.commit()
             await session.refresh(question)
+        self._vector.add(
+            doc_id=f"question:{question.id}",
+            text=f"[{question.raised_by}] {question.question}",
+            metadata={
+                "project_id": question.project_id,
+                "type": "open_question",
+                "priority": question.priority,
+                "status": question.status.value,
+            },
+        )
         return question
 
     async def get_open_questions(self, project_id: str) -> Sequence[OpenQuestion]:

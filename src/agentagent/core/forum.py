@@ -147,15 +147,16 @@ class ProgramManager:
     # Steps that actually build the product — never skipped
     _EXECUTION_STEPS = frozenset({"engineering", "qa"})
 
-    async def run_workflow(self, user_prompt: str) -> WorkflowState:
+    async def run_workflow(self, user_prompt: str, selected_steps: set[str] | None = None) -> WorkflowState:
         """Execute the full workflow pipeline.
 
         Runs steps in dependency order, executes parallel steps concurrently,
         evaluates gates, and handles failures.
 
-        For simple requests the planning steps (management, product, design,
-        architecture) are auto-completed with a brief stub so the workflow
-        jumps straight to engineering.
+        If ``selected_steps`` is provided, only those steps are executed;
+        all others are auto-completed with the user prompt as context.
+        When ``selected_steps`` is ``None`` and the request is simple,
+        planning steps are fast-tracked automatically.
         """
         if self._event_bus:
             await self._event_bus.emit(Event(
@@ -164,9 +165,17 @@ class ProgramManager:
                 project_id=self._project_id,
             ))
 
-        # ── Fast-track simple requests ──
-        if await self._is_simple_request(user_prompt):
-            await self._fast_track_planning(user_prompt)
+        # ── Decide which steps to skip ──
+        if selected_steps is not None:
+            # Skip everything NOT in the user's selection
+            excluded = {name for name in self._state.steps if name not in selected_steps}
+            if excluded:
+                await self._skip_steps(excluded, user_prompt)
+        elif await self._is_simple_request(user_prompt):
+            # Fast-track: skip planning steps for simple requests
+            excluded = {name for name in self._state.steps if name not in self._EXECUTION_STEPS}
+            if excluded:
+                await self._skip_steps(excluded, user_prompt)
 
         max_iterations = len(self._config.workflow) * 3  # Allow for retries
 
@@ -372,6 +381,54 @@ class ProgramManager:
             logger.warning("Complexity classification failed, using full pipeline")
             return False
 
+    async def _skip_steps(self, excluded: set[str], user_prompt: str) -> None:
+        """Auto-complete the given steps with a brief stub.
+
+        Marks each excluded step as COMPLETED with a minimal TeamOutput so
+        that dependency checks pass.
+        """
+        logger.info("Skipping steps: %s", excluded)
+
+        stub_content = (
+            f"Step auto-completed.\n\n"
+            f"Request: {user_prompt}\n\n"
+            f"Build exactly what was asked for, nothing more. "
+            f"Keep it minimal and straightforward."
+        )
+
+        for step_name in excluded:
+            step_state = self._state.steps.get(step_name)
+            if not step_state:
+                continue
+            step_state.status = StepStatus.COMPLETED
+            step_state.gate_result = GateResult.APPROVED
+            step_state.gate_notes = "Skipped"
+            step_state.team_output = TeamOutput(
+                content=stub_content,
+                confidence=1.0,
+                rounds_used=0,
+            )
+
+            if self._event_bus:
+                await self._event_bus.emit(Event(
+                    type=EventType.WORKFLOW_STEP_START,
+                    data={
+                        "step": step_name,
+                        "gate": step_state.step.gate,
+                        "attempt": 0,
+                    },
+                    project_id=self._project_id,
+                ))
+                await self._event_bus.emit(Event(
+                    type=EventType.WORKFLOW_STEP_COMPLETE,
+                    data={
+                        "step": step_name,
+                        "gate": step_state.step.gate,
+                        "skipped": True,
+                    },
+                    project_id=self._project_id,
+                ))
+
     async def _fast_track_planning(self, user_prompt: str) -> None:
         """Auto-complete all planning steps with brief stubs.
 
@@ -422,7 +479,7 @@ class ProgramManager:
                 ))
 
     def _build_task(self, step_name: str, user_prompt: str) -> str:
-        """Build the task description including upstream context."""
+        """Build the task description including upstream context and gate feedback."""
         step_state = self._state.steps[step_name]
         parts = [f"User's original request: {user_prompt}"]
 
@@ -435,6 +492,14 @@ class ProgramManager:
             "and the implementation straightforward. Only scale up complexity "
             "when the request genuinely warrants it."
         )
+
+        # Inject gate feedback from prior attempt
+        if step_state.gate_result == GateResult.RETURNED and step_state.gate_notes:
+            parts.append(
+                f"\n## REVISION REQUIRED — Gate Feedback (attempt {step_state.attempts})\n"
+                f"Your previous output was returned by the gate reviewer. "
+                f"Address the following feedback:\n\n{step_state.gate_notes}"
+            )
 
         # Add upstream outputs
         for dep_gate in step_state.step.depends_on:
@@ -560,6 +625,12 @@ class ProgramManager:
                     f"\nUser constraint: {msg.get('message', '')}"
                 )
 
+            elif action == "converse":
+                await self._handle_converse(msg, current_step)
+
+            elif action == "end_conversation":
+                await self._handle_end_conversation(msg, current_step)
+
             else:
                 # Classify audience of freeform messages
                 await self._route_user_message(msg, current_step)
@@ -602,6 +673,113 @@ class ProgramManager:
             self._state.steps[current_step].gate_notes += (
                 f"\nUser input: {msg.get('message', '')}"
             )
+
+    # ── Conversation handling ──────────────────────────────────────
+
+    async def _handle_converse(self, msg: dict[str, str], current_step: str) -> None:
+        """Handle a targeted conversation request.
+
+        Routes to PM, team, or individual agent based on ``target``.
+        The conversation result is injected back into the step context.
+        """
+        from agentagent.core.deliberation import DeliberationConfig, converse_with_team
+
+        target = msg.get("target", "pm")
+        user_message = msg.get("message", "")
+
+        if self._event_bus:
+            await self._event_bus.emit(Event(
+                type=EventType.CONVERSATION_START,
+                data={"target": target, "step": current_step},
+                project_id=self._project_id,
+            ))
+
+        if target == "pm":
+            # Direct chat with PM
+            resp = await self._pm_agent.run(
+                [Message(role="user", content=user_message)],
+                run_context=self._run_context,
+            )
+            if self._event_bus:
+                await self._event_bus.emit(Event(
+                    type=EventType.CONVERSATION_MESSAGE,
+                    data={"speaker": "program_manager", "content": resp.content, "target": target},
+                    project_id=self._project_id,
+                ))
+            self._state.steps[current_step].gate_notes += (
+                f"\nConversation with PM: {resp.content[:500]}"
+            )
+
+        elif target.startswith("team:"):
+            team_name = target.split(":", 1)[1]
+            team = self._teams.get(team_name)
+            if not team:
+                logger.warning("Team %s not found for conversation", team_name)
+                return
+
+            context = self._build_task(current_step, user_message)
+            config = DeliberationConfig(max_rounds=4)
+            result = await converse_with_team(
+                moderator_agent=team.moderator_agent._agent,
+                agents=team.experts,
+                user_message=user_message,
+                context=context,
+                historian=team.historian,
+                config=config,
+                event_bus=self._event_bus,
+                project_id=self._project_id,
+                run_context=self._run_context,
+            )
+            self._state.steps[current_step].gate_notes += (
+                f"\nTeam conversation summary: {result.summary[:500]}"
+            )
+
+        elif target.startswith("agent:"):
+            # agent:{team}:{role}
+            parts = target.split(":", 2)
+            if len(parts) < 3:
+                logger.warning("Invalid agent target format: %s", target)
+                return
+            team_name, agent_role = parts[1], parts[2]
+            team = self._teams.get(team_name)
+            if not team:
+                logger.warning("Team %s not found for agent conversation", team_name)
+                return
+
+            agent = next((a for a in team.experts if a.role == agent_role), None)
+            if not agent:
+                logger.warning("Agent %s not found in team %s", agent_role, team_name)
+                return
+
+            resp = await agent.run(
+                [Message(role="user", content=user_message)],
+                run_context=self._run_context,
+            )
+            if self._event_bus:
+                await self._event_bus.emit(Event(
+                    type=EventType.CONVERSATION_MESSAGE,
+                    data={"speaker": agent_role, "content": resp.content, "target": target},
+                    project_id=self._project_id,
+                ))
+            self._state.steps[current_step].gate_notes += (
+                f"\nConversation with {agent_role}: {resp.content[:500]}"
+            )
+
+        if self._event_bus:
+            await self._event_bus.emit(Event(
+                type=EventType.CONVERSATION_END,
+                data={"target": target, "step": current_step},
+                project_id=self._project_id,
+            ))
+
+    async def _handle_end_conversation(self, msg: dict[str, str], current_step: str) -> None:
+        """End a conversation session and inject summary into context."""
+        if self._event_bus:
+            await self._event_bus.emit(Event(
+                type=EventType.CONVERSATION_END,
+                data={"step": current_step, "message": msg.get("message", "")},
+                project_id=self._project_id,
+            ))
 
     # ── File scanning ────────────────────────────────────────────
 

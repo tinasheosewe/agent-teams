@@ -143,7 +143,7 @@ class Orchestrator:
         logger.info("Created project %s: %s", project_id, prompt[:100])
         return state
 
-    async def run_project(self, project_id: str) -> ProjectState:
+    async def run_project(self, project_id: str, selected_steps: set[str] | None = None) -> ProjectState:
         """Run a project through the full workflow.
 
         For single-team configs: directly runs the team.
@@ -199,7 +199,7 @@ class Orchestrator:
             if len(config.teams) == 1:
                 state = await self._run_single_team(state, config, teams, run_context)
             else:
-                state = await self._run_multi_team(state, config, teams, run_context)
+                state = await self._run_multi_team(state, config, teams, run_context, selected_steps)
         except Exception:
             state.status = ProjectStatus.FAILED
             await self._persist_project_state(state)
@@ -241,6 +241,7 @@ class Orchestrator:
         config: CompanyConfig,
         teams: dict[str, Team],
         run_context: RunContext,
+        selected_steps: set[str] | None = None,
     ) -> ProjectState:
         """Run a multi-team project through the forum."""
 
@@ -270,7 +271,7 @@ class Orchestrator:
             run_context=run_context,
         )
 
-        workflow_state = await pm.run_workflow(state.prompt)
+        workflow_state = await pm.run_workflow(state.prompt, selected_steps=selected_steps)
 
         state.workflow_state = workflow_state
         state.total_input_tokens = workflow_state.total_input_tokens
@@ -294,7 +295,8 @@ class Orchestrator:
         return state
 
     async def send_user_message(
-        self, project_id: str, message: str, action: str = "message"
+        self, project_id: str, message: str, action: str = "message",
+        *, target: str | None = None,
     ) -> dict[str, Any]:
         """Handle user input during a running project.
 
@@ -303,12 +305,18 @@ class Orchestrator:
         - veto: override a decision
         - skip: skip the current step
         - constrain: add a constraint
+        - converse: start/continue a targeted conversation (requires target)
+        - end_conversation: end the current conversation session
         """
         state = self._projects.get(project_id)
         if not state:
             return {"error": "Project not found"}
 
-        await state.message_queue.put({"action": action, "message": message})
+        msg: dict[str, str] = {"action": action, "message": message}
+        if target:
+            msg["target"] = target
+
+        await state.message_queue.put(msg)
 
         return {"status": "received", "action": action}
 
@@ -405,11 +413,22 @@ class Orchestrator:
                 desc = raw.get("company", {}).get("description", "")
                 teams_list = raw.get("company", {}).get("teams", [])
                 team_names = [t.get("name", "") for t in teams_list]
+                workflow_raw = raw.get("workflow", [])
+                workflow_steps = [
+                    {
+                        "step": s.get("step", ""),
+                        "team": s.get("team", ""),
+                        "depends_on": s.get("depends_on", []),
+                        "output": s.get("output", []),
+                    }
+                    for s in workflow_raw
+                ]
                 configs.append({
                     "path": str(f),
                     "name": name,
                     "description": desc,
                     "teams": team_names,
+                    "workflow": workflow_steps,
                 })
             except Exception:
                 continue

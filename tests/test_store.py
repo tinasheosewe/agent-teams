@@ -13,6 +13,7 @@ from agentagent.store.models import (
     DecisionStatus,
     DiscussionSummary,
     OpenQuestion,
+    Transcript,
 )
 from agentagent.store.repository import Repository
 from agentagent.store.vector import VectorStore
@@ -169,6 +170,36 @@ async def test_open_questions(repo):
     await repo.answer_question(saved.id, "Yes, OAuth2 with Google")
     questions = await repo.get_open_questions("proj1")
     assert len(questions) == 0
+
+
+@pytest.mark.asyncio
+async def test_save_question_vector_indexed(repo):
+    """save_question should add the question to the vector store for semantic search."""
+    q = OpenQuestion(
+        project_id="proj1",
+        question="Should we support multi-tenancy?",
+        raised_by="architect",
+        priority="high",
+    )
+    await repo.save_question(q)
+
+    results = repo.search("proj1", "multi-tenancy")
+    assert len(results) > 0
+
+
+@pytest.mark.asyncio
+async def test_save_transcript_vector_indexed(repo):
+    """save_transcript should add the transcript to the vector store for semantic search."""
+    t = Transcript(
+        project_id="proj1",
+        team="engineering",
+        round_number=1,
+        content="The team discussed microservices vs monolith architecture.",
+    )
+    await repo.save_transcript(t)
+
+    results = repo.search("proj1", "microservices architecture")
+    assert len(results) > 0
 
 
 @pytest.mark.asyncio

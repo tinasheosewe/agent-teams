@@ -45,6 +45,14 @@ class EventType(str, Enum):
     FILE_WRITTEN = "file_written"
     # Cost
     COST_UPDATE = "cost_update"
+    # Deliberation
+    DELIBERATION_START = "deliberation_start"
+    DELIBERATION_CYCLE = "deliberation_cycle"
+    DELIBERATION_COMPLETE = "deliberation_complete"
+    # Conversation (targeted user chat with PM/team/agent)
+    CONVERSATION_START = "conversation_start"
+    CONVERSATION_MESSAGE = "conversation_message"
+    CONVERSATION_END = "conversation_end"
 
 
 @dataclass
@@ -102,6 +110,19 @@ class EventBus:
                 await handler(event)
             except Exception:
                 logger.exception("Event handler error for %s", event.type)
+
+
+@dataclass
+class ConversationSession:
+    """Tracks an active conversation between the user and PM/team/agent."""
+
+    id: str
+    target: str  # "pm" | "team:{name}" | "agent:{team}:{role}"
+    transcript: list[dict[str, str]] = field(default_factory=list)
+    step_paused_at: str = ""
+
+    def add_message(self, role: str, speaker: str, content: str) -> None:
+        self.transcript.append({"role": role, "speaker": speaker, "content": content})
 
 
 @dataclass

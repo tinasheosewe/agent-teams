@@ -22,6 +22,13 @@ class Complexity(str, Enum):
     THOROUGH = "thorough"
 
 
+class ThinkingDepth(str, Enum):
+    """How deeply agents should deliberate before and after execution."""
+
+    PERSPECTIVE_ONLY = "perspective_only"  # OPEN round only, no probing
+    FULL = "full"                         # Full deliberation with tension probing
+
+
 class GateCriteria(BaseModel):
     """Acceptance criteria for a workflow gate."""
 
@@ -50,6 +57,9 @@ class TeamConfig(BaseModel):
     )
     moderator_model: str = "gpt-4o"
     max_rounds: int = 10
+    enable_deliberation: bool = False
+    thinking_depth: ThinkingDepth = ThinkingDepth.FULL
+    max_deliberation_cycles: int = 3
 
 
 class WorkflowStep(BaseModel):

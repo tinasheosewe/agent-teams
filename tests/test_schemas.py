@@ -4,14 +4,16 @@ import pytest
 from pydantic import ValidationError
 
 from agentagent.core.schemas import (
-    ChallengeResponse,
-    CompletenessResponse,
+    DiscussionSynthesis,
     GateEvaluation,
     OptionsResponse,
+    ReflectionSynthesis,
     ReviewResponse,
     ScoringResponse,
+    SpiralCheck,
     StenographerExtraction,
     TaskDecomposition,
+    json_schema_format,
     parse_llm_json,
 )
 
@@ -106,29 +108,50 @@ def test_options_response():
     assert data.recommendation == "Postgres"
 
 
-# ── ChallengeResponse ────────────────────────────────────────
+# ── Discussion schemas ────────────────────────────────────────
 
 
-def test_challenge_agree():
-    raw = '{"agree": true}'
-    data = parse_llm_json(raw, ChallengeResponse)
-    assert data.agree is True
+def test_spiral_check_circular():
+    raw = '{"is_circular": true, "reason": "Same argument", "redirect_topic": "Focus"}'
+    data = parse_llm_json(raw, SpiralCheck)
+    assert data.is_circular is True
+    assert data.redirect_topic == "Focus"
 
 
-def test_challenge_disagree():
-    raw = '{"agree": false, "suggested_mode": "execution", "reason": "code task"}'
-    data = parse_llm_json(raw, ChallengeResponse)
-    assert data.agree is False
-    assert data.suggested_mode == "execution"
+def test_spiral_check_not_circular():
+    raw = '{"is_circular": false, "reason": "Making progress"}'
+    data = parse_llm_json(raw, SpiralCheck)
+    assert data.is_circular is False
+    assert data.redirect_topic is None
 
 
-# ── CompletenessResponse ─────────────────────────────────────
+def test_discussion_synthesis():
+    raw = '{"summary": "Use REST", "mode_selection": "execution", "mode_reasoning": "Build task", "open_items": []}'
+    data = parse_llm_json(raw, DiscussionSynthesis)
+    assert data.mode_selection == "execution"
+    assert data.mode_reasoning == "Build task"
 
 
-def test_completeness_complete():
-    raw = '{"complete": true, "reasoning": "all done", "missing": []}'
-    data = parse_llm_json(raw, CompletenessResponse)
-    assert data.complete is True
+def test_reflection_synthesis_accept():
+    raw = '{"summary": "Looks good", "verdict": "accept", "revision_guidance": "", "confidence": 0.95}'
+    data = parse_llm_json(raw, ReflectionSynthesis)
+    assert data.verdict == "accept"
+    assert data.confidence == 0.95
+
+
+def test_reflection_synthesis_revise():
+    raw = '{"summary": "Needs work", "verdict": "revise", "revision_guidance": "Fix errors", "confidence": 0.3}'
+    data = parse_llm_json(raw, ReflectionSynthesis)
+    assert data.verdict == "revise"
+    assert data.revision_guidance == "Fix errors"
+
+
+def test_json_schema_format_structure():
+    schema = SpiralCheck.model_json_schema()
+    fmt = json_schema_format("TestSchema", schema)
+    assert fmt["type"] == "json_schema"
+    assert fmt["json_schema"]["name"] == "TestSchema"
+    assert "schema" in fmt["json_schema"]
 
 
 # ── GateEvaluation ────────────────────────────────────────────
