@@ -1,6 +1,9 @@
 """Tests for the Knowledge Store."""
 
+import sqlite3
+
 import pytest
+from sqlalchemy import text
 
 from agentagent.store.database import Database
 from agentagent.store.models import (
@@ -166,3 +169,36 @@ async def test_open_questions(repo):
     await repo.answer_question(saved.id, "Yes, OAuth2 with Google")
     questions = await repo.get_open_questions("proj1")
     assert len(questions) == 0
+
+
+@pytest.mark.asyncio
+async def test_database_initialize_upgrades_legacy_projects_table(tmp_path):
+    db_path = tmp_path / "legacy.db"
+
+    # Simulate a pre-migration schema that lacks newer project columns.
+    con = sqlite3.connect(db_path)
+    con.execute(
+        """
+        CREATE TABLE projects (
+            id VARCHAR(32) PRIMARY KEY,
+            prompt TEXT NOT NULL,
+            config_name VARCHAR(256) NOT NULL,
+            created_at DATETIME
+        )
+        """
+    )
+    con.commit()
+    con.close()
+
+    db = Database(db_path)
+    await db.initialize()
+
+    async with db.session() as session:
+        result = await session.execute(text("PRAGMA table_info(projects)"))
+        columns = {row[1] for row in result.fetchall()}
+
+    await db.close()
+
+    assert "mode" in columns
+    assert "status" in columns
+    assert "total_input_tokens" in columns

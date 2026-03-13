@@ -21,6 +21,7 @@ Thumbs.db
 
 # Data
 data/chroma/
+data/*.db
 
 # Env
 .env
