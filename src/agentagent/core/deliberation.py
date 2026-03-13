@@ -538,6 +538,21 @@ async def deliberate(
                         "content": summary,
                         "phase": phase_label,
                         "actions": len(actions_taken),
+                        "board_actions": {
+                            "new_points": [
+                                {"id": board.get_point(board._next_id - len(turn_data.new_points) + i).id if board.get_point(board._next_id - len(turn_data.new_points) + i) else i + 1, "claim": p.claim}
+                                for i, p in enumerate(turn_data.new_points)
+                            ],
+                            "reactions": [
+                                {"point_id": r.point_id, "stance": r.stance, "reasoning": r.reasoning}
+                                for r in turn_data.reactions
+                            ],
+                            "amendments": [
+                                {"point_id": a.point_id, "new_claim": a.new_claim, "reason": a.reason}
+                                for a in turn_data.amendments
+                            ],
+                            "done": turn_data.done and not actions_taken,
+                        },
                     },
                     project_id=project_id,
                 ))
@@ -682,6 +697,21 @@ async def deliberate(
         )
 
     if event_bus:
+        statuses = board.all_status(roster)
+        board_snapshot = [
+            {
+                "id": p.id,
+                "claim": p.current.claim,
+                "author": p.author,
+                "version": p.current_version,
+                "status": statuses[p.id].value,
+                "reactions": [
+                    {"agent": r.agent, "stance": r.stance.value, "reasoning": r.reasoning}
+                    for r in p.current.reactions.values()
+                ],
+            }
+            for p in board.points
+        ]
         await event_bus.emit(Event(
             type=EventType.DELIBERATION_COMPLETE,
             data={
@@ -691,13 +721,14 @@ async def deliberate(
                 "mode_selection": result.mode_selection,
                 "total_points": len(board.points),
                 "consensus_points": sum(
-                    1 for s in board.all_status(roster).values()
+                    1 for s in statuses.values()
                     if s == PointStatus.CONSENSUS
                 ),
                 "contested_points": sum(
-                    1 for s in board.all_status(roster).values()
+                    1 for s in statuses.values()
                     if s == PointStatus.CONTESTED
                 ),
+                "board": board_snapshot,
             },
             project_id=project_id,
         ))

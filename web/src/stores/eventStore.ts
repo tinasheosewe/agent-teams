@@ -50,6 +50,12 @@ function extractToast(event: WsEvent): Omit<Toast, "id" | "createdAt"> | null {
   if (type === "user_input_requested") {
     return { kind: "info", title: "Input needed", detail: data.question as string };
   }
+  if (type === "deliberation_complete") {
+    const contested = data.contested_points as number;
+    if (contested > 0) {
+      return { kind: "warning", title: `${contested} contested point${contested > 1 ? "s" : ""}`, detail: data.summary as string };
+    }
+  }
   return null;
 }
 

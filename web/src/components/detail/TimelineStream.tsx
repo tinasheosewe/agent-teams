@@ -12,6 +12,10 @@ import {
   AlertTriangle,
   User,
   Zap,
+  MessageCircle,
+  CheckCircle2,
+  XCircle,
+  CircleDot,
 } from "lucide-react";
 import { Avatar } from "../ui/Avatar";
 import { Badge } from "../ui/Badge";
@@ -19,7 +23,7 @@ import { ConfidenceRing } from "../ui/Progress";
 import { cn, hashColor } from "../../lib/utils";
 import type { WsEvent } from "../../stores/eventStore";
 
-type EventFilter = "all" | "messages" | "decisions" | "tools" | "gates" | "system";
+type EventFilter = "all" | "messages" | "deliberation" | "decisions" | "tools" | "gates" | "system";
 
 interface Props {
   events: WsEvent[];
@@ -74,6 +78,7 @@ export function TimelineStream({ events, selectedStep, grouped, onToggleGrouped 
     const typeMap: Record<EventFilter, string[]> = {
       all: [],
       messages: ["agent_message"],
+      deliberation: ["deliberation_start", "deliberation_cycle", "deliberation_complete"],
       decisions: ["decision_made", "decision_superseded"],
       tools: ["agent_tool_call"],
       gates: ["forum_gate_result"],
@@ -190,7 +195,7 @@ export function TimelineStream({ events, selectedStep, grouped, onToggleGrouped 
 
         {/* Event type filters */}
         <div className="flex items-center gap-1 ml-2">
-          {(["all", "messages", "decisions", "tools", "gates", "system"] as EventFilter[]).map((f) => (
+        {(["all", "messages", "deliberation", "decisions", "tools", "gates", "system"] as EventFilter[]).map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -521,6 +526,178 @@ function EventCard({ event }: { event: WsEvent }) {
         <div className="flex items-center justify-center gap-2">
           <Zap className="h-4 w-4 text-[#34c759]" />
           <span className="text-[13px] font-semibold text-[#248a3d]">Workflow Complete</span>
+        </div>
+      </div>
+    );
+  }
+
+  // Deliberation start
+  if (type === "deliberation_start") {
+    const phase = (data.phase as string) ?? "think";
+    const agents = (data.agents as string[]) ?? [];
+    return (
+      <div className="px-3 py-2.5 rounded-xl bg-[rgba(0,113,227,0.04)] border border-[rgba(0,113,227,0.1)] flex items-start gap-2">
+        <MessageCircle className="h-4 w-4 text-[#0071e3] shrink-0 mt-0.5" />
+        <div>
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className="text-[12px] font-semibold text-[#0071e3] capitalize">
+              {phase === "reflect" ? "Reflection" : "Deliberation"} started
+            </span>
+            <span className="text-[10px] text-[#86868b]">
+              {new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </span>
+          </div>
+          <div className="flex items-center gap-1 flex-wrap">
+            {agents.map((a) => (
+              <div key={a} className="flex items-center gap-1">
+                <Avatar name={a} size="sm" className="h-4 w-4 text-[7px]" />
+                <span className="text-[10px] text-[#6e6e73]">{a}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Deliberation cycle (turn progress)
+  if (type === "deliberation_cycle") {
+    const turn = data.round as number;
+    const converged = data.converged as boolean;
+    const doneAgents = data.done_agents as number | undefined;
+    const totalAgents = data.total_agents as number | undefined;
+    const settled = data.board_settled as boolean | undefined;
+
+    if (converged) {
+      return (
+        <div className="flex items-center gap-2 px-3 py-1.5 text-[11px]">
+          <CheckCircle2 className="h-3 w-3 text-[#34c759]" />
+          <span className="text-[#248a3d] font-medium">
+            Board converged at turn {turn}
+          </span>
+        </div>
+      );
+    }
+
+    // Non-converged: show progress
+    return (
+      <div className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-[#86868b]">
+        <CircleDot className="h-3 w-3 text-[#0071e3]/50" />
+        <span>
+          Turn {turn}
+          {doneAgents !== undefined && totalAgents !== undefined && (
+            <> · {doneAgents}/{totalAgents} done</>
+          )}
+          {settled === false && <> · open points</>}
+        </span>
+      </div>
+    );
+  }
+
+  // Deliberation complete
+  if (type === "deliberation_complete") {
+    const phase = (data.phase as string) ?? "think";
+    const summary = (data.summary as string) ?? "";
+    const totalPts = (data.total_points as number) ?? 0;
+    const consensusPts = (data.consensus_points as number) ?? 0;
+    const contestedPts = (data.contested_points as number) ?? 0;
+    const verdict = data.verdict as string | undefined;
+    const modeSelection = data.mode_selection as string | undefined;
+
+    return (
+      <div className="px-3 py-2.5 rounded-xl bg-gradient-to-r from-[#eff6ff] to-[#f0fdf4] border border-[#bfdbfe]/30">
+        <div className="flex items-center gap-2 mb-1">
+          <MessageCircle className="h-3.5 w-3.5 text-[#0071e3]" />
+          <span className="text-[12px] font-semibold text-[#0071e3] capitalize">
+            {phase === "reflect" ? "Reflection" : "Deliberation"} complete
+          </span>
+          {verdict && (
+            <Badge
+              variant={verdict === "accept" ? "success" : "warning"}
+              size="sm"
+            >
+              {verdict}
+            </Badge>
+          )}
+          {modeSelection && (
+            <Badge variant="info" size="sm">{modeSelection}</Badge>
+          )}
+          <span className="ml-auto text-[10px] text-[#86868b]">
+            {new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+          </span>
+        </div>
+        <p className="text-[12px] text-[#3a3a3c] mb-1.5">{summary}</p>
+        <div className="flex items-center gap-2">
+          {consensusPts > 0 && (
+            <span className="flex items-center gap-0.5 text-[10px] text-[#248a3d]">
+              <CheckCircle2 className="h-2.5 w-2.5" /> {consensusPts} consensus
+            </span>
+          )}
+          {contestedPts > 0 && (
+            <span className="flex items-center gap-0.5 text-[10px] text-[#c93400]">
+              <XCircle className="h-2.5 w-2.5" /> {contestedPts} contested
+            </span>
+          )}
+          {totalPts - consensusPts - contestedPts > 0 && (
+            <span className="flex items-center gap-0.5 text-[10px] text-[#86868b]">
+              <CircleDot className="h-2.5 w-2.5" /> {totalPts - consensusPts - contestedPts} open
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Agent message with board actions (during deliberation)
+  if (type === "agent_message" && data.board_actions) {
+    const agent = (data.agent as string) ?? "Agent";
+    const actions = data.board_actions as {
+      new_points?: { id: number; claim: string }[];
+      reactions?: { point_id: number; stance: string; reasoning: string }[];
+      amendments?: { point_id: number; new_claim: string; reason: string }[];
+      done?: boolean;
+    };
+
+    return (
+      <div className="flex gap-3 px-3 py-2.5 rounded-xl hover:bg-[rgba(0,0,0,0.02)] transition-colors">
+        <Avatar name={agent} size="sm" className="mt-0.5" />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[12px] font-semibold text-[#1d1d1f]">{agent}</span>
+            <Badge variant="neutral" size="sm" className="text-[9px]">
+              {(data.phase as string) ?? "think"}
+            </Badge>
+            <span className="text-[10px] text-[#86868b]">
+              {new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            </span>
+          </div>
+          <div className="space-y-1">
+            {actions.new_points?.map((p) => (
+              <div key={p.id} className="flex items-start gap-1.5 text-[12px]">
+                <span className="text-[#0071e3] shrink-0 font-medium">+</span>
+                <span className="text-[#3a3a3c]">#{p.id} {p.claim}</span>
+              </div>
+            ))}
+            {actions.reactions?.map((r, i) => {
+              const stanceIcon = r.stance === "agree" ? "+" : r.stance === "disagree" ? "x" : "?";
+              const stanceColor = r.stance === "agree" ? "text-[#34c759]" : r.stance === "disagree" ? "text-[#ff3b30]" : "text-[#ff9500]";
+              return (
+                <div key={i} className="flex items-start gap-1.5 text-[12px]">
+                  <span className={cn("shrink-0 font-medium", stanceColor)}>{stanceIcon}</span>
+                  <span className="text-[#6e6e73]">#{r.point_id}: {r.reasoning}</span>
+                </div>
+              );
+            })}
+            {actions.amendments?.map((a, i) => (
+              <div key={i} className="flex items-start gap-1.5 text-[12px]">
+                <span className="text-[#af52de] shrink-0 font-medium">~</span>
+                <span className="text-[#3a3a3c]">#{a.point_id} → {a.new_claim}</span>
+              </div>
+            ))}
+            {actions.done && !actions.new_points?.length && !actions.reactions?.length && !actions.amendments?.length && (
+              <span className="text-[11px] text-[#86868b] italic">done — nothing to add</span>
+            )}
+          </div>
         </div>
       </div>
     );
