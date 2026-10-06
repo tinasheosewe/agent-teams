@@ -24,7 +24,11 @@ MAX_WORKSPACE_BYTES = 52_428_800  # 50 MB total
 
 
 class CodeExecutionTool(BaseTool):
-    """Execute code in a sandboxed subprocess. Supports Python, Node, shell."""
+    """Execute code in a subprocess. Supports Python, Node, shell.
+
+    This is not a sandbox: the code runs with the server's privileges. Its
+    working directory is the project workspace and the timeout is the only limit.
+    """
 
     def __init__(self, work_dir: str | None = None, timeout: int = 30) -> None:
         self._work_dir = work_dir or tempfile.mkdtemp(prefix="agentagent_")
@@ -37,8 +41,9 @@ class CodeExecutionTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Execute code in a sandboxed environment. Supports Python, JavaScript/Node, "
-            "and shell commands. Returns stdout, stderr, and exit code."
+            "Execute code in a subprocess whose working directory is the project "
+            "workspace. Supports Python, JavaScript/Node, and shell commands. "
+            "Returns stdout, stderr, and exit code."
         )
 
     @property

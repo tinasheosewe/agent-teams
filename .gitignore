@@ -6,6 +6,11 @@ dist/
 build/
 *.egg
 .venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 
 # Node
 node_modules/
@@ -19,9 +24,9 @@ web/dist/
 .DS_Store
 Thumbs.db
 
-# Data
-data/chroma/
-data/*.db
+# Runtime data: SQLite database, Chroma store, files written by agent runs
+data/
+workspace/
 
 # Env
 .env
